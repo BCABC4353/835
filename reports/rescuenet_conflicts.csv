@@ -1,0 +1,381 @@
+CODE,DESCRIPTIONS
+1,Misdirected claims | Redirected claim
+10,Duplicate Claim appeal | INFORMATION REQUESTED FROM THE BILLING/RENDERING PROVIDER WAS NOT PROVIDED OR NOT PROVIDED TIMELY OR WAS INSUFFICIENT/INCOMPLETE. | Invalid policy/id number | Remaining portion of bill paid by healthcare insurance
+11,No Fault - Denied Driving under the Influence. | No Fault - Failure to appear for medical exam by an insurer is a breach of a condition precedent to coveage under the no fault policy. | No NPI on submitted claim
+13,Health Savings account payments | Incorrect Place of Sevice | his service/equipment/drug is not covered under the patients current benefit plan
+14,INCORRECT PLACE OF SEVICE | Incorrect Place of Sevice | Incorrect carrier | Initial decision upheld
+18,Cap. hospital responsibility | PAYMENT REDUCED DUE TO OTHER INSURANCE PAYMENT. | Primary payers benefit is equal or greater than plans benefits | This (these) diagnosis(es) is (are) not covered.
+19,Denied to Logisticare | Disposition of Service Line is pending review
+2,Member cannot be identified | Recipient is Not Elig 4 Mcal
+21,EXTRN CAUSE OF INJURY DX CANNOT BE PRIMARY DX. | The procedure code is inconsistent with the provider type/specialty (taxonomy).
+48,Payment denied/reduced for absence of precertification/authorization | These are non-covered services because this is a pre-existing condition
+9,DISCOVERED PT HAS MEDICARE-BILL MEDICARE DIRECTLY. | EXPENSES INCURRED PRIOR TO COVERAGE. | Expenses not approved by medicare are not covered
+AO23,"Not medically necessary, per medical director. | Other Ajustments - Impact of prior payers adjudication  including payments and /or adjustments"
+CO-284,Payment is included in the allowance for a Skilled Nursing Facility (SNF) qualified stay. | Payment made to patient/insured/responsible party. | Precertification/authorization/notification/pre-treatment number may be valid but does not apply to the billed services.
+CO001,IM HAS BEEN FORWARDED TO THEM FO | PAYMNT ADJUSTMNT TO PREV CLAIM
+CO0012,Hospital Inpatient Controversy | Info Missing/Incomplete
+CO0014,INITIAL DECISION-UPHELD | Incorrect Place of Sevice
+CO0015,Lifetime benefit maximum has been reached. | Medicare Disallowed service
+CO0016,MEDICARE IS PRIMARY | Major Medical Adjustment.
+CO0017,BENEFITS WERE COORDINATED WITH YOUR PRIMARY HEALTH CARE PLAN | BENEFITS WERE COORDINATED WITH YOUR PRIMARY HEALTH CARE PLAN. | Benefits adjusted. Plan procedures not followed.
+CO002,Procedure denied due to related service not paid | REOPENING CLERICAL ERROR.
+CO0027,Health Savings account payments | Inclusive in Primary Procedure
+CO0028,CLAIM REDUCTION | Claim not submitted within timely filing limitations
+CO0029,ATED WITH YOUR MEDICAL GROUP.CLA | COORDINATION OF BENEFITS APPLIED ON THIS CLAIM
+CO003,Primary payers benefit is equal or greater than plans benefits | Prior approval number invalid | RECOVERY WRITE OFF
+CO0031,RECOVERY WRITE OFF | Services Are Not A Medicare Covered Benefit
+CO0033,BILL MEDICARE HOSPICE SERVICE | Bill Medicaid directly.
+CO0036,CLAIM ADJUSTMENT | Claim adjusted based on failure to follow prior payer's coverage rules. (Use Group Code OA).
+CO0039,INFORMATION REQUESTED FROM THE BILLING/RENDERING PROVIDER WAS NOT PROVIDED OR NOT PROVIDED TIMELY OR WAS INSUFFICIENT | INVALID INFORMATION RECEIVED
+CO0043,PROMPT-PAY DISCOUNT. | SEQUESTRATION REDUCTION
+CO0045,SUBMISSION/BILLING ERROR | Services Are Not A Medicare Covered Benefit
+CO0049,Medicare allowable | The diagnosis is inconsistent with the patient's age.
+CO005,PROVIDER CONTRACTED/NEGOTIATED RATE EXPIRED OR NOT ON FILE. | SERVICE DOWNCODED TO MATCH AUTHORIZED CODE
+CO0050,"Provider is not contracted for your plan.  The services were not precertified, therefore no payment will be made. | SERVICE IS INCLUDED IN THE PER DIEM,CARE RATE,OR GLOBAL FEE"
+CO0052,Primary diagnosis missing for procedure. | RECEIVED /IN PROCESS
+CO0055,DENY SERVICE IS UNBUNDLED | Denied-No patient responsibility.
+CO0056,JUDICATION. | THE ALLOWED AMT IS INTENDED TO BE PAYMENT IN FULL FOR COVRD SRVICE/ NEGOTIATED AGREEMENT ON FILE
+CO0058,"MILEAGE QUANTITY DOES NOT MATCH AMBULANCE NOTES | Medical records have not been received or are insufficient to determine decision of payment. Please submit the ambulance trip notes, ER report, H&P notes, progress notes, and discharge summary within 30 days."
+CO0061,Charged exceed our fee schedule or maximum allowable amount. | Other
+CO0062,Original payment decision is being maintained. This claim was processed properly the first time. | PAID PER APPROVED RETRO AUTH
+CO007,OUT OF NETWORK. | Original payment decision is being maintained. This claim was processed properly the first time.
+CO008,MISSING/INCOMPLETE/INVALID DAYS OR UNITS OF SERVICE. | Original payment decision is being maintained. This claim was processed properly the first time. | PAID MEDICAID FEE SCHEDULE
+CO01,INGREDIENT COST ADJUSTMENT. | IPA responsibility
+CO011,APPLIED TO DEDUCTIBLE | Applied to deductible
+CO012,APPLIED TO CO-PAY | Applied to co-pay
+CO013,Prior authorization is required but was not obtained. | Refund request
+CO014,DOS after coverage terminated | Discount agreed to in Preferred Provider contract.
+CO015,DOS after coverage terminated | Duplicate Claim
+CO016,DRG | Dispensing fee adjustment.
+CO017,Non standard adjustment code from paper remittance advice. | Non-Covered service
+CO02,Bill w/point of pickup zip code in box 23 | CANNOT ID MEMBER
+CO021,IPA responsibility | MAXIMUM ALLOWABLE MET
+CO022,PRIMARY EOB NEEDED | URANCE PAYMENT.
+CO024,"Procedure is not paid separately | REQUIRES ORIGINAL CLAIMS WITH AL_x000D_
+L RELEVANT DOCUMENTATION."
+CO025,"Services not covered because the patient is enrolled in a Hospice. | THE COMBINATION OF PROCEDURE COD_x000D_
+E AND MODIFIER IS NOT VALID ON T_x000D_
+HE DATES OF SERVICE BILLED."
+CO028,"REOPENING CLERICAL ERROR. | SERVICES BILLED EXCEED THE OCCUR_x000D_
+RENCES REMAINING ON THE APPROVED_x000D_
+TAR/SAR."
+CO03,These are non-covered services because this is a pre-existing condition | Untimely Filing
+CO030,"NSIBILITY OF THE HOSPITAL AFFILI | PAYMENT REDUCED BECAUSE OF PATIE_x000D_
+NT LIABILITY."
+CO031,"FOR NON-PHYSICIAN CLAIMS,SEE CHA_x000D_
+RPENTIER BILLING INSTRUCTION IN _x000D_
+THE PROVIDER MANUAL. | Failure to obtain prior authorization prior to rendering services."
+CO034,"THIS PROCEDURE IS NOT PAYABLE ON_x000D_
+THIS DATE OF SERVICE. | The referring provider is not eligible to refer the service billed."
+CO038,"PAYMENT FOR SERVICE IS THE RESPO_x000D_
+NSIBILITY OF THE HOSPITAL AFFILI_x000D_
+ATED WITH YOUR MEDICAL GROUP.CLA_x000D_
+IM HAS BEEN FORWARDED TO THEM FO_x000D_
+R REVIEW. | Payment denied/reduced for absence of precertification/authorization"
+CO039,"REFUND REQUEST | SERVICES ARE THE FINANCIAL RESPO_x000D_
+NSIBILITY OF LOGISTICARE.CLAIM H_x000D_
+AS BEEN FORWARDED TO THEM FOR AD_x000D_
+JUDICATION."
+CO043,"THESE ARE NON-COVERED SERVICES BECAUSE THIS IS A ROUTINE EXAM OR SCREENING PROCEDURE DONE IN CONJUNCTION WITH A ROUTINE EXAM. | UPHOLD-THE CLAIM HAS BEEN FORWAR_x000D_
+DED TO THE RESPONSIBLE PARTY FOR_x000D_
+PMT."
+CO045,"These are non-covered services because this is a routine exam or screening procedure done in conjunction with a routine exam. | UPHOLD-CONTRACTED/LOA RATE WAS P_x000D_
+AID.NO ADDITIONAL AMOUNT DUE."
+CO046,Submit transportation service claim to the proper vendor. | THE MEMBER HAS ELECTED MEDICARE HOSPICE BENEFITS.
+CO049,Initial decision upheld | LATE BILLING * CUTBACK.
+CO05,Missing/incomplete/invalid patient name | No authorization | No authorization on file
+CO052,Provider discount. | SERVICE INCLUDED IN OTHER SVCS.
+CO06,Information requested from the billing/provider was not provided or was insifficient/incomplete | Invalid HCPC codes
+CO07,"Info Missing/Incomplete | Invalid DX codes | SERVICES NOT DOCUMENTED IN PATIENTS' MEDICAL RECORDS. | THE DIAGNOSIS CODE SUBMITTED IS _x000D_
+NOT BILLED TO THE HIGHEST LEVEL _x000D_
+OF SPECIFICITY."
+CO08,NON STANDARD ADJUSTMENT CODE FROM PAPER REMITTANCE ADVICE. | Not medically necessary
+CO09,Health plan responsibility | RPENTIER BILLING INSTRUCTION IN
+CO1,Decision based on review of previusly adjudicated claims or for claims in process for the same/similar type of services. | Deductible Amount
+CO10,SERVICES NOT PROVIDED BY NETWORK/PRIMARY CARE PROVIDERS | The diagnosis is inconsistent with the patient's gender.
+CO102,INVALID POLICY/ID NUMBER | Major Medical Adjustment.
+CO107,Claim/Service adjusted because the attachment referenced on the claim was not received. | Claim/service adjusted because the related or qualifying claim/service was not identified on this claim.
+CO109,Claim information is inconsistent with pre-certified/authorized services. | Claim not covered by this payer/contractor. You must send the claim to the correct payer/contractor.
+CO11,Services not provided or authorized by designated (network/primary care) providers. | The diagnosis is inconsistent with the procedure.
+CO112,Patient is not a Veteran as defined in 38 USC 1720G(a)(2). 38 UCS 111(e)(2)(D). | Payment adjusted as not furnished directly to the patient and/or not documented.
+CO117,Payment adjusted because this care may be covered by another payer per coordination of benefits. | Payment adjusted because transportation is only covered to the closest facility that can provide the necessary care.
+CO118,Charges not approved by Medicare are not covered under the policy. | Charges reduced for ESRD network support.
+CO119,BASED ON THE FINDINGS OF A REVIEW ORGANIZATION | Benefit maximum for this time period or occurrence has been reached.
+CO12,"Services were rendered after the cancellation date of your contract, therefore, no benefits are payable | The diagnosis is inconsistent with the provider type."
+CO125,Payment adjusted because this procedure code and modifier were invalid on the date of service | Payment adjusted due to a submission/billing error(s). Additional information is supplied using the remittance advice remarks codes whenever appropriate. This change to be effective 4/1/2007: At least one Remark Code must be provided.
+CO129,PAYMENT ADJUSTED BECAUSE THIS SERVICE/PROCEDURE REQUIRES THAT A QUALIFYING SERVICE/PROCEDURE BE RECEIVED AND COVERED. THE QUALIFYING OTHER SERVICE/PROCEDURE HAS NOT BEEN RECEIVED/ADJUDICATED. | Payment denied - Prior processing information appears incorrect.
+CO13,Services not covered because the patient is enrolled in a Hospice. | The date of death precedes the date of service.
+CO131,Claim overlaps inpatient stay.  Rebill only those services rendered outside the inpatient stay. | Claim specific negotiated discount.
+CO132,Payment is included in the allowance for a Skilled Nursing Facility (SNF) qualified stay. | Prearranged demonstration project adjustment.
+CO133,Social Security records indicate that this patient was a prisoner when the service was rendered. | The disposition of this claim/service is pending further review.
+CO138,CLAIM/SERVICE DENIED BECAUSE PROCEDURE/TREATMENT IS DEEMED EXPERIMENTAL/INVESTIGATIONAL BY THE PAYER. | Claim/service denied. Appeal procedures not followed or time limits not met.
+CO140,PATIENT HAS NOT MET THE REQUIRED ELIGIBILITY REQUIREMENTS | Patient/Insured health identification number and name do not match.
+CO146,PAYMENT ADJUSTED DUE TO A SUBMISSION/BILLING ERROR(S). ADDITIONAL INFORMATION IS SUPPLIED USING THE REMITTANCE ADVICE REMARKS CODES WHENEVER APPROPRIATE. THIS CHANGE TO BE EFFECTIVE 4/1/2007: AT LEAST ONE REMARK CODE MUST BE PROVIDED. | Payment denied because the diagnosis was invalid for the date(s) of service reported.
+CO147,Precertification/authorization/notification/pre-treatment number may be valid but does not apply to the billed services. | Provider contracted/negotiated rate expired or not on file.
+CO15,"Payment adjusted because the payer deems the information submitted does not support this many services. | Payment adjusted because the submitted authorization number is missing, invalid, or does not apply to the billed services or provider."
+CO150,PAYMENT ADJUSTED BECAUSE AN ALTERNATE BENEFIT HAS BEEN PROVIDED | PAYMENT ADJUSTED BECAUSE PROCEDURE/SERVICE WAS PARTIALLY OR FULLY FURNISHED BY ANOTHER PROVIDER. | Payment adjusted as not furnished directly to the patient and/or not documented. | Payment adjusted because an alternate benefit has been provided | Payment adjusted because the payer deems the information submitted does not support this level of service.
+CO151,PAYMENT ADJUSTED BECAUSE RENT/PURCHASE GUIDELINES WERE NOT MET. | PAYMENT ADJUSTED BECAUSE REQUESTED INFORMATION WAS NOT PROVIDED OR WAS INSUFFICIENT/INCOMPLETE. ADDITIONAL INFORMATION IS SUPPLIED USING THE REMITTANCE ADVICE REMARKS CODES WHENEVER APPROPRIATE. AT LEAST ONE REMARK CODE MUST BE PROVIDED. | Payment adjusted because rent/purchase guidelines were not met. | Payment adjusted because requested information was not provided or was insufficient/incomplete. Additional information is supplied using the remittance advice remarks codes whenever appropriate. At least one Remark Code must be provided. | Payment adjusted because the payer deems the information submitted does not support this many services.
+CO16,Claim/Service denied. At least one Remark Code must be provided (may be comprised of either the Remittance Advice Remark Code or NCPDP Reject Reason Code). | Claim/service lacks information which is needed for adjudication. Additional information is supplied using remittance advice remarks codes whenever appropriate. This change to be effective 4/1/2007: At least one Remark Code must be provided.
+CO163,Claim/Service adjusted because the attachment referenced on the claim was not received in a timely fashion. | Claim/Service adjusted because the attachment referenced on the claim was not received.
+CO164,Claim Withdrawn a Providers request | Claim specific negotiated discount. | Claim/Service adjusted because the attachment referenced on the claim was not received in a timely fashion.
+CO166,The disposition of this claim/service is pending further review. | These services were submitted after this payers responsibility for processing claims under this plan ended.
+CO167,"THE MEMBER HAS ELECTED MEDICARE HOSPICE BENEFITS. | The Medicaid state requires provider to be enrolled in the member's Mediciad state program prior to any claim benefits being processed. | The member's coverage was not in effect on the date services were provided. | The patient's coverage does not provide for Ambulance services. Therefore, no payment can be made. We provide administrative claims payment services only and do not assume any financial risk or obligation. | This (these) diagnosis(es) is (are) not covered."
+CO168,PAYMENT ADJUSTED BECAUSE TRANSPORTATION IS ONLY COVERED TO THE CLOSEST FACILITY THAT CAN PROVIDE THE NECESSARY CARE. | Payment denied as Service(s) have been considered under the patient's medical plan. Benefits are not available under this dental plan
+CO169,Patient is not an eligible person under PIP as applicant was in the use and operation of their own vehicle at the time of motor vehicle accident. | Payment adjusted because an alternate benefit has been provided
+CO17,PATIENT RESPONSIBILITY | Payment adjusted because requested information was not provided or was insufficient/incomplete. Additional information is supplied using the remittance advice remarks codes whenever appropriate. At least one Remark Code must be provided.
+CO170,"Payment denied/reduced for exceeded, precertification/authorization | Payment is denied when performed/billed by this type of provider."
+CO171,"Payment denied/reduced for exceeded, precertification/authorization | Payment is denied when performed/billed by this type of provider in this type of facility."
+CO177,Original payment decision is being maintained. This claim was processed properly the first time. | PATIENT HAS NOT MET THE REQUIRED ELIGIBILITY REQUIREMENTS | Payment adjusted due to the impact of prior payer(s) adjudication including payments and/or adjustments | Payment denied because the patient has not met the required eligibility requirements
+CO18,Duplicate Claim | Duplicate claim/service.
+CO181,PAYMENT ADJUSTED BECAUSE THE PROCEDURE MODIFIER WAS INVALID ON THE DATE OF SERVICE | Payment adjusted because the procedure modifier was invalid on the date of service | Payment adjusted because this procedure code was invalid on the date of service
+CO182,Payment adjusted because the benefit for this service is included in the payment/allowance for another service/procedure that has already been adjudicated | Payment adjusted because the payer deems the information submitted does not support this level of service. | Payment adjusted because the procedure modifier was invalid on the date of service
+CO183,THE COMBINATION OF PROCEDURE COD | The referring provider is not eligible to refer the service billed.
+CO184,"The ambulance claim submitted on your behalf has been returned to the provider due ot a billing issue.  If you have questions regarding a corrected claim submission, please contact the community provider. | The prescribing/ordering provider is not eligible to prescribe/order the service billed."
+CO185,E AND MODIFIER IS NOT VALID ON T | The rendering provider is not eligible to perform the service billed.
+CO19,Claim denied because this injury/illness is the liability of the no-fault carrier. | Claim denied because this is a work-related injury/illness and thus the liability of the Worker's Compensation Carrier.
+CO190,"Payment denied/reduced for exceeded, precertification/authorization | Payment is included in the allowance for a Skilled Nursing Facility (SNF) qualified stay."
+CO192,No Fault - The application for benefits was not received within 30 days of the accident date and the applicant did not submit prior written notice. | No Fault - Treatment is not related to the Motor Vehicle Accident. | No Fault - Written proof of claim was provided more than 45 days after the date these services were rendered. | No Medicare Allowable | Non standard adjustment code from paper remittance advice.
+CO193,Non-Covered days/Room charge adjustment. | Non-covered charge(s). This change to be effective 4/1/2007: At least one Remark Code must be provided (may be comprised of either the Remittance Advice Remark Code or NCPDP Reject Reason Code.) | Original payment decision is being maintained. This claim was processed properly the first time.
+CO196,Claim/service adjusted because the related or qualifying claim/service was not identified on this claim. | Claim/service denied based on prior payer's coverage determination.
+CO197,Payment denied because the diagnosis was invalid for the date(s) of service reported. | Payment denied/reduced for absence of precertification/authorization
+CO198,"Payment denied/reduced because the payer deems the information submitted does not support this level of service, this many services, this length of service, this dosage, or this day's supply. | Payment denied/reduced for absence of precertification/authorization | Payment denied/reduced for exceeded, precertification/authorization"
+CO2,COB/Deny No Fault/MedPay Benefits Apply. | Coinsurance Amount
+CO20,Claim denied as patient cannot be identified as our insured. | Claim denied because this injury/illness is covered by the liability carrier.
+CO200,Expenses incurred after coverage terminated. | Expenses incurred during lapse in coverage
+CO203,DISCONTINUED OR REDUCED SERVICE | Did not call Hospice prior to calling EMS as per protocol and education as per De Baker note
+CO204,The time limit for filing has expired. | This service/equipment/drug is not covered under the patient’s current benefit plan
+CO21,Claim denied because this injury/illness is covered by the liability carrier. | Claim denied because this injury/illness is the liability of the no-fault carrier.
+CO22,Payment adjusted because the payer deems the information submitted does not support this many services. | Payment adjusted because this care may be covered by another payer per coordination of benefits.
+CO222,Duplicate of services previously claimed.  Submitting duplicate claims adds administrative cost for provider and payer. | Exceeds the contracted maximum number of hours/days/units by this provider for this period
+CO23,Payment adjusted because this procedure code was invalid on the date of service | Payment adjusted due to the impact of prior payer(s) adjudication including payments and/or adjustments
+CO234,THIS PROCEDURE IS NOT PAID SEPERATELY | The referring provider is not eligible to refer the service billed.
+CO24,Payment denied/reduced for absence of precertification/authorization | Payment for charges adjusted. Charges are covered under a capitation agreement/managed care plan.
+CO25,PAYMENT DENIED AS SERVICE(S) HAVE BEEN CONSIDERED UNDER THE PATIENT'S MEDICAL PLAN. BENEFITS ARE NOT AVAILABLE UNDER THIS DENTAL PLAN | Payment denied. Your Stop loss deductible has not been met.
+CO251,"SERVICES BILLED EXCEED THE OCCUR | The attachment/other documentation that was received was incomplete or deficient. The necessary information is still needed to process the claim. At least one Remark Code must be provided (may be comprised of either the NCPDP Reject Reason Code, or Remitt"
+CO252,An attachment/other documentation is required to adjudicate this claim/service. | Attachment is required to adjudicate this claim
+CO253,Processed in Excess of charges. | Processed under a demonstration project or program. Project or program is ending and additional services may not be paid under this project or program. (bill Medicaid directly) | Sequestration - Reduction in Federal Spending.
+CO256,Enrollment Needed | Provider resubmit claim with appropiate ambulance modifier | SERVICE NOT PAYABLE PER MANAGED CARE CONTRACT
+CO26,Expenses incurred during lapse in coverage | Expenses incurred prior to coverage.
+CO27,Eligibility Investigation | Expenses incurred after coverage terminated.
+CO28,CO-PAYMENT AMOUNT | Coverage not in effect at the time the service was provided.
+CO29,"The contract does not provide for these services, therefore, no benefits are payable. | The time limit for filing has expired."
+CO3,Co-payment Amount | Contractual adjustment.
+CO31,Claim cutback due to Medicare payment. | Claim denied as patient cannot be identified as our insured.
+CO34,CLAIM DENIED BECAUSE THIS IS A WORK-RELATED INJURY/ILLNESS AND THUS THE LIABILITY OF THE WORKER'S COMPENSATION CARRIER. | Claim denied. Insured has no coverage for newborns.
+CO39,Require dx. | Services denied at the time authorization/pre-certification was requested.
+CO4,"THE ATTACHMENT/OTHER DOCUMENTATION THAT WAS RECEIVED WAS INCOMPLETE OR DEFICIENT. THE NECESSARY INFORMATION IS STILL NEEDED TO PROCESS THE CLAIM. AT LEAST ONE REMARK CODE MUST BE PROVIDED (MAY BE COMPRISED OF EITHER THE NCPDP REJECT REASON CODE, OR REMITT | The procedure code is inconsistent with the modifier used or a required modifier is missing."
+CO40,Charges are adjusted based on multiple surgery rules or concurrent anesthesia rules. | Charges do not meet qualifications for emergent/urgent care.
+CO41,Disagreement of care/out of service area | Discount agreed to in Preferred Provider contract.
+CO42,Charges do not meet qualifications for emergent/urgent care. | Charges exceed our fee schedule or maximum allowable amount.
+CO43,"FOR NON-PHYSICIAN CLAIMS,SEE CHA | Gramm-Rudman reduction."
+CO44,Pmnt reversal-Hospice member-bill Medicare directly | Prompt-pay discount.
+CO45,Charges exceed our fee schedule or maximum allowable amount. | Charges exceed your contracted/ legislated fee arrangement. This change to be effective 6/1/07: Charge exceeds fee schedule/maximum allowable or contracted/legislated fee arrangement. (Use Group Codes PR or CO depending upon liability).
+CO46,The prescribing/ordering provider is not eligible to prescribe/order the service billed. | This (these) service(s) is (are) not covered.
+CO49,The diagnosis is inconsistent with the patient's gender. | These are non-covered services because this is a routine exam or screening procedure done in conjunction with a routine exam.
+CO5,The claim was submitted for a patient who is not enrolled in a VA Health Care System. | The procedure code/bill type is inconsistent with the place of service.
+CO50,The diagnosis is inconsistent with the procedure. | These are non-covered services because this is not deemed a 'medical necessity' by the payer.
+CO54,Misrouted Claim. See the payor's claim submission instructions. Start 08/01/2007 | Multiple physicians/assistants are not covered in this case .
+CO55,Claim/service denied based on prior payer's coverage determination. | Claim/service denied because procedure/treatment is deemed experimental/investigational by the payer.
+CO56,Claim/service denied based on prior payer's coverage determination. | Claim/service denied because procedure/treatment has not been deemed 'proven to be effective' by the payer.
+CO58,"CLAIM/SERVICE REJECTED AT THIS TIME BECAUSE INFORMATION FROM ANOTHER PROVIDER WAS NOT PROVIDED OR WAS INSUFFICIENT/INCOMPLETE. | Claim/service not covered/reduced because alternative services were available, and should have been utilized. | Claim/services denied /reduce due to invalid place of service | Payment adjusted because treatment was deemed by the payer to have been rendered in an inappropriate or invalid place of service."
+CO59,Charges adjusted as penalty for failure to obtain second surgical opinion. | Charges are adjusted based on multiple surgery rules or concurrent anesthesia rules.
+CO61,Charge exceeds the covered amount for service | Charges adjusted as penalty for failure to obtain second surgical opinion.
+CO70,CO-PAYMENT AMOUNT | Cost outlier - Adjustment to compensate for additional costs.
+CO8,The charge exceeds the Medicare allowable amount. | The procedure code is inconsistent with the provider type/specialty (taxonomy).
+CO9,Services not documented in patients' medical records. | The diagnosis is inconsistent with the patient's age.
+CO90,Inconsistent diagnosis and/or modifier | Ingredient cost adjustment.
+CO91,DISCONTINUED OR REDUCED SERVICE | Dispensing fee adjustment.
+CO94,Please submit charge to Medicaid | Processed in Excess of charges.
+CO95,BENEFIT MAXIMUM FOR THIS TIME PERIOD OR OCCURRENCE HAS BEEN REACHED. | Benefits adjusted. Plan procedures not followed.
+CO96,No PIP Application on File. | Non-covered charge(s). This change to be effective 4/1/2007: At least one Remark Code must be provided (may be comprised of either the Remittance Advice Remark Code or NCPDP Reject Reason Code.)
+CO97,Patient(s) was/were not admitted to hospice program at the time service(s) was/were provided. | Payment adjusted because the benefit for this service is included in the payment/allowance for another service/procedure that has already been adjudicated
+COA1,Claim/Service denied. At least one Remark Code must be provided (may be comprised of either the Remittance Advice Remark Code or NCPDP Reject Reason Code). | Claim/service denied. Appeal procedures not followed or time limits not met.
+COA2,Completed suborgation/workers compensation questionaire needed from member before claim can be processed. | Contractual adjustment.
+COB10,ALLOWED AMOUNT HAS BEEN REDUCED BECAUSE A COMPONENT OF THE BASIC PROCEDURE/TEST WAS PAID. THE BENEFICIARY IS NOT LIABLE FOR MORE THAN THE CHARGE LIMIT FOR THE BASIC PROCEDURE/TEST. | Allowed amount has been reduced because a component of the basic procedure/test was paid. The beneficiary is not liable for more than the charge limit for the basic procedure/test.
+COB11,Services denied at the time authorization/pre-certification was requested. | The claim/service has been transferred to the proper payer/processor for processing. Claim/service not covered by this payer/processor.
+COB12,SEQUESTRATION REDUCTION | Services not documented in patients' medical records.
+COB15,"PAYMENT ADJUSTED BECAUSE THE SUBMITTED AUTHORIZATION NUMBER IS MISSING, INVALID, OR DOES NOT APPLY TO THE BILLED SERVICES OR PROVIDER. | Payment adjusted because this service/procedure requires that a qualifying service/procedure be received and covered. The qualifying other service/procedure has not been received/adjudicated."
+COB18,Payment adjusted because the procedure modifier was invalid on the date of service | Payment adjusted because this procedure code and modifier were invalid on the date of service
+COB20,Patient not admitted to hospice program at the time service provided. | Payment adjusted because procedure/service was partially or fully furnished by another provider.
+COB4,INITIAL DECISION-UPHELD | Late filing penalty.
+COB7,THE RENDERING PROVIDER IS NOT ELIGIBLE TO PERFORM THE SERVICE BILLED. | This provider was not certified/eligible to be paid for this procedure/service on this date of service.
+COB9,Send copy of EOB from primary carrier. | Services not covered because the patient is enrolled in a Hospice.
+COP14,RENCES REMAINING ON THE APPROVED | The Benefit for this Service is included in the payment/allowance for another service/procedure that has been performed on the same day
+COP5,"BASED ON PAYER REASONABLE AND CUSTOMARY FEES. NO MAXIMUM ALLOWABLE DEFINED BY LEGISLATED FEE ARRANGEMENT. TO BE | Based on payer reasonable and customary fees. No maximum allowable defined by legislated fee arrangement. To be_x000D_
+used for Property and Casualty only."
+CR119,"Because Medicare did not approve this expense, no benefits are payable. | Benefit maximum for this time period or occurrence has been reached."
+CR23,Payment adjusted because this procedure code was invalid on the date of service | Payment adjusted due to the impact of prior payer(s) adjudication including payments and/or adjustments
+CR27,EXCEEDS THE CONTRACTED MAXIMUM NUMBER OF HOURS/DAYS/UNITS BY THIS PROVIDER FOR THIS PERIOD | Expenses incurred after coverage terminated.
+CR29,The date of death precedes the date of service. | The time limit for filing has expired.
+CR38,Service non-covered for beneficiary enrolled in PDP (pharmacy discount program) | Services not provided or authorized by designated (network/primary care) providers.
+H-MCR105,HMO claim is pending-violation of prompt pay law | MCARE HMO claim is pending-violation of prompt pay law
+H-MCR106,Diagnosis is inconsistent with procedure billed | Disagreement of care/out of service area
+H-MCR129,Charges do not meet qualifications for emergent/urgent care. | Charges exceed fee schedule; Max allowable
+N706,Medicare Information Missing or Invalid Resubmit | Missing Documentation
+NULL,<None> | Charges non-covered | Invalid policy/id number
+OA10,Services not provided or authorized by designated (network/primary care) providers. | The diagnosis is inconsistent with the patient's gender.
+OA100,Payment for charges adjusted. Charges are covered under a capitation agreement/managed care plan. | Payment made to patient/insured/responsible party.
+OA102,Invalid policy/id number | Major Medical Adjustment.
+OA108,Patient not eligible on defense enrollment and eligibility reporting system (DEERS). | Payment adjusted because rent/purchase guidelines were not met.
+OA109,Claim is unrelated to workers compensation case. | Claim not covered by this payer/contractor. You must send the claim to the correct payer/contractor.
+OA11,SERVICES NOT PROVIDED OR AUTHORIZED BY DESIGNATED (NETWORK/PRIMARY CARE) PROVIDERS. | The diagnosis is inconsistent with the procedure.
+OA119,BENEFIT MAXIMUM FOR THIS TIME PERIOD OR OCCURRENCE HAS BEEN REACHED. | Benefit maximum for this time period or occurrence has been reached.
+OA121,Hospice primary | Indemnification adjustment.
+OA129,Payment adjusted because this service/procedure requires that a qualifying service/procedure be received and covered. The qualifying other service/procedure has not been received/adjudicated. | Payment denied - Prior processing information appears incorrect.
+OA131,CLAIM REDUCTION | Claim specific negotiated discount.
+OA133,SUBMISSION/BILLING ERROR | The disposition of this claim/service is pending further review.
+OA136,Charges submitted show an incorrect date of service and/or patient name | Claim adjusted based on failure to follow prior payer's coverage rules. (Use Group Code OA).
+OA138,CLAIM/SERVICE DENIED BECAUSE PROCEDURE/TREATMENT IS DEEMED EXPERIMENTAL/INVESTIGATIONAL BY THE PAYER. | Claim/service denied. Appeal procedures not followed or time limits not met.
+OA146,Payment adjusted due to the impact of prior payer(s) adjudication including payments and/or adjustments | Payment denied because the diagnosis was invalid for the date(s) of service reported.
+OA16,Claim/Service has missing diagnosis information. | Claim/service lacks information which is needed for adjudication. Additional information is supplied using remittance advice remarks codes whenever appropriate. This change to be effective 4/1/2007: At least one Remark Code must be provided.
+OA164,CLAIM/SERVICE ADJUSTED BECAUSE THE ATTACHMENT REFERENCED ON THE CLAIM WAS NOT RECEIVED IN A TIMELY FASHION. | Claim/Service adjusted because the attachment referenced on the claim was not received in a timely fashion.
+OA168,PAYMENT ADJUSTED BECAUSE TRANSPORTATION IS ONLY COVERED TO THE CLOSEST FACILITY THAT CAN PROVIDE THE NECESSARY CARE. | Payment denied as Service(s) have been considered under the patient's medical plan. Benefits are not available under this dental plan
+OA172,Payment denied/reduced for absence of precertification/authorization | Payment is adjusted when performed/billed by a provider of this specialty
+OA177,Payment adjusted for exceeding precertification/authorization | Payment denied because the patient has not met the required eligibility requirements
+OA18,Duplicate Claim | Duplicate claim/service.
+OA181,Payment adjusted because the procedure modifier was invalid on the date of service | Payment adjusted because this procedure code was invalid on the date of service
+OA182,Payment adjusted because the payer deems the information submitted does not support this level of service. | Payment adjusted because the procedure modifier was invalid on the date of service
+OA187,Fractional mileage units required. | GRAMM-RUDMAN REDUCTION. | Health Savings account payments | THE PROVIDER MANUAL.
+OA19,CLAIM DENIED BECAUSE THIS INJURY/ILLNESS IS THE LIABILITY OF THE NO-FAULT CARRIER. | Claim denied because this is a work-related injury/illness and thus the liability of the Worker's Compensation Carrier.
+OA192,No NPI on submitted claim | Non standard adjustment code from paper remittance advice.
+OA193,Non-Covered service | Non-covered diagnosis. | Non-covered service. | Original payment decision is being maintained. This claim was processed properly the first time.
+OA197,Payment denied because the diagnosis was invalid for the date(s) of service reported. | Payment denied because the patient has not met the required eligibility requirements | Payment denied/reduced for absence of precertification/authorization
+OA198,"Payment adjusted because this procedure code was invalid on the date of service | Payment denied/reduced for exceeded, precertification/authorization"
+OA21,Claim denied because this injury/illness is covered by the liability carrier. | Claim denied because this injury/illness is the liability of the no-fault carrier.
+OA216,PROVIDER DISPUTE DENIED | ggh
+OA22,Payment adjusted because the payer deems the information submitted does not support this many services. | Payment adjusted because this care may be covered by another payer per coordination of benefits.
+OA23,Payment adjusted because this procedure code was invalid on the date of service | Payment adjusted due to the impact of prior payer(s) adjudication including payments and/or adjustments
+OA243,Secondary payment cannot be considered without the identity of or payment information from the primary payer. | Send copy of EOB from primary carrier | Services not authorized by network/primary care providers.
+OA253,Processed in Excess of charges. | Sequestration - reduction in federal payment
+OA258,"Non-covered charge(s). This change to be effective 4/1/2007: At least one Remark Code must be provided (may be comprised of either the Remittance Advice Remark Code or NCPDP Reject Reason Code.) | OA258 - Claim/service not covered when patient is in custody/incarcerated. Applicable federal, state or local authority may cover the claim/service."
+OA28,Cost outlier - Adjustment to compensate for additional costs. | Coverage not in effect at the time the service was provided.
+OA29,THE DIAGNOSIS CODE SUBMITTED IS | The time limit for filing has expired.
+OA31,Claim Denied - Beneficiary travel claim was filed outside of the 30-day timely filing limitation. 38 CFR 70.20 (c). | Claim denied as patient cannot be identified as our insured.
+OA38,Service not contracted. | Services not provided or authorized by designated (network/primary care) providers.
+OA39,REQUIRES ORIGINAL CLAIMS WITH AL | Services denied at the time authorization/pre-certification was requested.
+OA4,THE ATTACHMENT/OTHER DOCUMENTATION THAT WAS RECEIVED WAS THE INCORRECT ATTACHMENT/DOCUMENT. | The procedure code is inconsistent with the modifier used or a required modifier is missing.
+OA42,Charges exceed fee schedule; Max allowable | Charges exceed our fee schedule or maximum allowable amount.
+OA45,Charges exceed our fee schedule or maximum allowable amount. | Charges exceed your contracted/ legislated fee arrangement. This change to be effective 6/1/07: Charge exceeds fee schedule/maximum allowable or contracted/legislated fee arrangement. (Use Group Codes PR or CO depending upon liability).
+OA47,"The ICD9 code on the claim do not support the billed procedure code | This (these) diagnosis(es) is (are) not covered, missing, or are invalid."
+OA50,The diagnosis is inconsistent with the procedure. | These are non-covered services because this is not deemed a 'medical necessity' by the payer.
+OA57,"PAYMENT DENIED AS SERVICE(S) HAVE BEEN CONSIDERED UNDER THE PATIENT'S MEDICAL PLAN. BENEFITS ARE NOT AVAILABLE UNDER THIS DENTAL PLAN | Payment denied/reduced because the payer deems the information submitted does not support this level of service, this many services, this length of service, this dosage, or this day's supply."
+OA8,The claim was submitted for a patient whi is not enrolled in a VA Health Care System. | The procedure code is inconsistent with the provider type/specialty (taxonomy).
+OA94,Please submit Medicare summary notice | Processed in Excess of charges.
+OA95,BENEFIT MAXIMUM FOR THIS TIME PERIOD OR OCCURRENCE HAS BEEN REACHED. | Benefits adjusted. Plan procedures not followed.
+OA96,No preauthorization has been obtained. | Non-covered charge(s). This change to be effective 4/1/2007: At least one Remark Code must be provided (may be comprised of either the Remittance Advice Remark Code or NCPDP Reject Reason Code.)
+OA97,Patient/Insured health identification number and name do not match. | Payment adjusted because the benefit for this service is included in the payment/allowance for another service/procedure that has already been adjudicated
+OAA0,Our records indicate that you have two or more health insurances that are primary to Tricare.  Your claim was denied because we did not recieve explanations of benefits (EOBS) from all of your insurances for the charges submitted to Tricare. | Patient refund amount.
+OAA1,Claim/Service denied. At least one Remark Code must be provided (may be comprised of either the Remittance Advice Remark Code or NCPDP Reject Reason Code). | Claim/service denied. Appeal procedures not followed or time limits not met.
+OAA2,Consult plan benefit documents/guildlines for information about restrictions for this service. | Contractual adjustment.
+OAB11,SERVICES DENIED AT THE TIME AUTHORIZATION/PRE-CERTIFICATION WAS REQUESTED. | The claim/service has been transferred to the proper payer/processor for processing. Claim/service not covered by this payer/processor.
+OAB12,SEQUESTRATION-REDUCTION IN FEDERAL PAYMENT | Service denied because payment already made for same/similar procedure within set time frame. | Services not documented in patients' medical records.
+OAB13,NT LIABILITY. | Previously paid. Payment for this claim/service may have been provided in a previous payment.
+OAB15,"PAYMENT ADJUSTED BECAUSE THE SUBMITTED AUTHORIZATION NUMBER IS MISSING, INVALID, OR DOES NOT APPLY TO THE BILLED SERVICES OR PROVIDER. | Payment adjusted because this service/procedure requires that a qualifying service/procedure be received and covered. The qualifying other service/procedure has not been received/adjudicated."
+OAB22,The procedure code/bill type is inconsistent with the place of service. | This payment is adjusted based on the diagnosis.
+OAB4,Insuffucuent COB information-resubmit with appropriate COB amounts | Late filing penalty.
+OAB7,The rendering provider is not eligible to perform the service billed. | This provider was not certified/eligible to be paid for this procedure/service on this date of service.
+OAB9,SEQUESTRATION - REDUCTION IN FEDERAL PAYMENT | Services not covered because the patient is enrolled in a Hospice.
+OAD18,Claim/Service denied. At least one Remark Code must be provided (may be comprised of either the Remittance Advice Remark Code or NCPDP Reject Reason Code). | Claim/Service has missing diagnosis information.
+PI107,Claim/Service adjusted because the attachment referenced on the claim was not received. | Claim/service adjusted because the related or qualifying claim/service was not identified on this claim. | MS MEDICAID DIDNT PAY MILEAGE ON A0425 AND SHOULD HAVE
+PI11,Services not provided or authorized by designated (network/primary care) providers. | The diagnosis is inconsistent with the procedure.
+PI128,Missing explanation of benefits (coordination of benefits or Medicare secondary payor). | Newborn's services are covered in the mother's Allowance.
+PI129,Payment adjusted because this service/procedure requires that a qualifying service/procedure be received and covered. The qualifying other service/procedure has not been received/adjudicated. | Payment denied - Prior processing information appears incorrect.
+PI146,Payment adjusted due to the impact of prior payer(s) adjudication including payments and/or adjustments | Payment denied because the diagnosis was invalid for the date(s) of service reported.
+PI147,Precertification/authorization/notification/pre-treatment number may be valid but does not apply to the billed services. | Provider contracted/negotiated rate expired or not on file.
+PI148,Claim/service lacks information which is needed for adjudication. Additional information is supplied using remittance advice remarks codes whenever appropriate. This change to be effective 4/1/2007: At least one Remark Code must be provided. | Claim/service rejected at this time because information from another provider was not provided or was insufficient/incomplete.
+PI15,"Payment adjusted because the payer deems the information submitted does not support this many services. | Payment adjusted because the submitted authorization number is missing, invalid, or does not apply to the billed services or provider."
+PI169,Patient liability may be affected due to coordination of benefits with other carriers and/or maximum benefit provisions. | Payment adjusted because an alternate benefit has been provided
+PI182,Payment adjusted because the payer deems the information submitted does not support this many services. | Payment adjusted because the procedure modifier was invalid on the date of service
+PI19,CLAIM DENIED BECAUSE THIS IS A WORK-RELATED INJURY/ILLNESS AND THUS THE LIABILITY OF THE WORKER'S COMPENSATION CARRIER. | Claim denied because this is a work-related injury/illness and thus the liability of the Worker's Compensation Carrier.
+PI197,Payment denied because the patient has not met the required eligibility requirements | Payment denied because the patient has not met the required eligibility requirements. | Payment denied/reduced for absence of precertification/authorization
+PI20,Claim denied as patient cannot be identified as our insured. | Claim denied because this injury/illness is covered by the liability carrier.
+PI204,THIS SERVICE/EQUIPMENT/DRUG IS NOT COVERED UNDER THE PATIENTS CURRENT PLAN | The time limit for filing has expired. | his service/device/drug is not covered under the current patient benefit plan.
+PI22,PAYMENT ADJUSTED BECAUSE THE PROCEDURE MODIFIER WAS INVALID ON THE DATE OF SERVICE | Payment adjusted because this care may be covered by another payer per coordination of benefits.
+PI226,Inclusive in Primary Procedure | Information requested from the Billing/Rendering Provider was not provided or not provided timely or was insufficient/incomplete.
+PI234,"Per ICD10, the combine dx codes cannot be reported together. | Please submit a copy of the Explanation of Benefits (EOB) from the Secondary Carrier. | Procedure is not paid separately"
+PI242,"SERVICE INCLUDED IN OTHER SVCS. | SERVICE IS INCLUDED IN THE PER DIEM,CARE RATE,OR GLOBAL FEE | SERVICES NOT PROVIDED BY NETWORK/PRIMARY CARE PROVIDERS"
+PI253,PROMPT-PAY DISCOUNT. | SEQUESTRATION-REDUCTION IN FEDERAL PAYMENT
+PI26,Expenses incurred during lapse in coverage | Expenses incurred prior to coverage.
+PI38,SERVICE NOT PAYABLE PER MANAGED CARE CONTRACT | Services not provided or authorized by designated (network/primary care) providers.
+PI4,THE BENEFIT FOR THIS SERVICE IS INCLUDED IN THE PAYMENT/ALLOWANCE FOR ANOTHER SERVICE/PROCEDURE THAT HAS BEEN PERFORMED ON THE SAME DAY | The procedure code is inconsistent with the modifier used or a required modifier is missing.
+PI40,Charges are adjusted based on multiple surgery rules or concurrent anesthesia rules. | Charges do not meet qualifications for emergent/urgent care.
+PI42,CHARGES EXCEED OUR FEE SCHEDULE OR MAXIMUM ALLOWABLE AMOUNT. | Charges exceed our fee schedule or maximum allowable amount.
+PI44,Prearranged demonstration project adjustment. | Prompt-pay discount.
+PI5,The claim/service has been transferred to the proper payer/processor for processing. Claim/service not covered by this payer/processor. | The procedure code/bill type is inconsistent with the place of service.
+PI51,The diagnosis is inconsistent with the patient's gender. | These are non-covered services because this is a pre-existing condition
+PI78,Non emergent ambulance services are not covered less medically necessary. | Non-Covered days/Room charge adjustment.
+PI9,Services not documented in patients' medical records. | The diagnosis is inconsistent with the patient's age.
+PI93,Missing/incomplete/invalid prior insurance carrier EOB. | No Claim level Adjustments.
+PI94,Pmnt for this claim/service was provided in a previous pmnt | Processed in Excess of charges.
+PI96,No prior Hospice knowledge and/or approval fo services provided. | Non-covered charge(s). This change to be effective 4/1/2007: At least one Remark Code must be provided (may be comprised of either the Remittance Advice Remark Code or NCPDP Reject Reason Code.)
+PI97,Patients coverage was not active on the service date(s) in question. | Payment adjusted because the benefit for this service is included in the payment/allowance for another service/procedure that has already been adjudicated
+PIA7,PAYMENT REDUCED BECAUSE OF PATIE | Presumptive Payment Adjustment
+PIB10,ALLOWED AMOUNT HAS BEEN REDUCED BECAUSE A COMPONENT OF THE BASIC PROCEDURE/TEST WAS PAID. THE BENEFICIARY IS NOT LIABLE FOR MORE THAN THE CHARGE LIMIT FOR THE BASIC PROCEDURE/TEST. | Allowed amount has been reduced because a component of the basic procedure/test was paid. The beneficiary is not liable for more than the charge limit for the basic procedure/test.
+PIB11,Services not authorized by network/primary care providers | The claim/service has been transferred to the proper payer/processor for processing. Claim/service not covered by this payer/processor.
+PIB12,SERVICE DOWNCODED TO MATCH AUTHORIZED CODE | Services not documented in patients' medical records.
+PIB13,PAYMENT REDUCED DUE TO OTHER INS | Previously paid. Payment for this claim/service may have been provided in a previous payment.
+PIB4,Invalid DX codes | Late filing penalty.
+PIB9,Sequestration - Reduction in Federal Spending. | Services not covered because the patient is enrolled in a Hospice.
+PR1,Deductible -- Major Medical | Deductible Amount
+PR100,PAYMENT FOR SERVICE IS THE RESPO | Payment made to patient/insured/responsible party.
+PR102,Invalid Procedure Modifier Combination. | Major Medical Adjustment.
+PR108,Patient refund amount. | Payment adjusted because rent/purchase guidelines were not met.
+PR11,Services were disallowed by Utilizaion Management. | The diagnosis is inconsistent with the procedure.
+PR110,BILL MEDICARE HOSPICE SERVICE | Billing date predates service date.
+PR117,Payment adjusted because this care may be covered by another payer per coordination of benefits. | Payment adjusted because transportation is only covered to the closest facility that can provide the necessary care.
+PR126,Deceased | Deductible -- Major Medical
+PR142,Claim Adjusted - Retroactive coverage termination | Claim adjusted by the monthly Medicaid patient liability amount.
+PR151,Payment adjusted because the benefit for this service is included in the payment/allowance for another service/procedure that has already been adjudicated | Payment adjusted because the payer deems the information submitted does not support this many services.
+PR167,The members coverage was not in effect on the date the service was provided. | The named patient has not applied for No Fault benefits with CDTA. | This (these) diagnosis(es) is (are) not covered.
+PR168,PAYMENT ADJUSTED BECAUSE TREATMENT WAS DEEMED BY THE PAYER TO HAVE BEEN RENDERED IN AN INAPPROPRIATE OR INVALID PLACE OF SERVICE. | Payment denied as Service(s) have been considered under the patient's medical plan. Benefits are not available under this dental plan
+PR17,Patient was not in custody of this correctional facility at the time the service was performed | Payment adjusted because requested information was not provided or was insufficient/incomplete. Additional information is supplied using the remittance advice remarks codes whenever appropriate. At least one Remark Code must be provided.
+PR170,"Payment denied/reduced for exceeded, precertification/authorization | Payment is denied when performed/billed by this type of provider."
+PR177,Payment denied - Prior processing information appears incorrect. | Payment denied because the patient has not met the required eligibility requirements | Payment denied because the patient has not met the required eligibility requirements.
+PR185,HE DATES OF SERVICE BILLED. | The rendering provider is not eligible to perform the service billed.
+PR187,HEALTH CARE PLAN ENROLLEE OR MEN | Health Savings account payments | TAL HEALTH PLAN RECIPENT;CAPITAT
+PR191,Claim denied because this is a work-related injury/illness and thus the liability of the Worker's Compensation Carrier. | Claim denied because this is not a work related injury/illness and thus not the liability of the workers' compensation carrier.
+PR192,No NPI on submitted claim | Non standard adjustment code from paper remittance advice.
+PR193,Not a covered benefit. | Not medically necessary | Original payment decision is being maintained. This claim was processed properly the first time.
+PR196,Claim/service adjusted because the related or qualifying claim/service was not identified on this claim. | Claim/service denied based on prior payer's coverage determination.
+PR197,PAYMENT DENIED PROVIDER OUT OF NETWORK | PAYMENT DENIED. YOUR STOP LOSS DEDUCTIBLE HAS NOT BEEN MET. | Payment denied/reduced for absence of precertification/authorization
+PR198,"Payment denied/reduced for absence of precertification/authorization | Payment denied/reduced for exceeded, precertification/authorization"
+PR2,Code is not a covered service on your fee schedule. | Coinsurance Amount
+PR201,This claim has been denied.  Please resubmit with a copy of the Medicare explanation of benefits. | Workers Compensation case settled. Patient is responsible for amount of this claim/service through WC 'Medicare set aside arrangement' or other agreement. (Use group code PR).
+PR204,The service / Equipment is not covered under the patients current benefit plan | his service/equipment/drug is not covered under the patients current benefit plan
+PR22,Payment adjusted because the procedure modifier was invalid on the date of service | Payment adjusted because this care may be covered by another payer per coordination of benefits.
+PR226,Inappropriate Ambulance Modifier | Information requested from the Billing/Rendering Provider was not provided or not provided timely or was insufficient
+PR227,INFORMATION REQUESTED FROM THE PATIENT/INSURED/RESPONSIBLE PARTY WAS NOT PROVIDED OR WAS INSUFFICIENT/INCOMPLETE | Incomplete EOB
+PR23,Payment adjusted because this procedure code was invalid on the date of service | Payment adjusted due to the impact of prior payer(s) adjudication including payments and/or adjustments
+PR234,The recommended payment is based on the usual and customary fee within the provider's specific geographic region. | This procedure is not paid separately
+PR242,PAYMENT DENIED AS SERVICE(S) HAVE BEEN CONSIDERED UNDER THE PATIENT'S MEDICAL PLAN. BENEFITS ARE NOT AVAILABLE UNDER THIS DENTAL PLAN | PAYMENT DENIED PROVIDER OUT OF NETWORK | Payment denied - Prior processing information appears incorrect.
+PR243,"Resubmit to CMO, 200 Corporate dr, Yonkers NY 10701 | Services not authorized by network/primary care providers"
+PR252,AN ATTACHMENT/OTHER DOCUMENTATION IS REQUIRED TO ADJUDICATE THIS CLAIM/SERVICE. AT LEAST | An attachment/other documentation is required to adjudicate this claim/service. AT LEAST
+PR26,EXPENSES INCURRED PRIOR TO COVERAGE. | Expenses incurred prior to coverage.
+PR276,OUT OF NETWORK. | PATIENT RESPONSIBILITY
+PR29,NOT BILLED TO THE HIGHEST LEVEL | The time limit for filing has expired.
+PR3,Co-payment Amount | Contractual adjustment.
+PR32,Operation of motor vehicle while under the influence of alcohol | Our records indicate that this dependent is not an eligible dependent as defined.
+PR33,Claim denied because this is not a work related injury/illness and thus not the liability of the workers' compensation carrier. | Claim denied. Insured has no dependent coverage.
+PR35,Invalid HCPC codes | Lifetime benefit maximum has been reached.
+PR38,Service not related to patient's Hospice terminal diagnosis plan of care. | Services not provided or authorized by designated (network/primary care) providers.
+PR39,L RELEVANT DOCUMENTATION. | Services denied at the time authorization/pre-certification was requested.
+PR4,The benefit for this service is not covered out of network. | The procedure code is inconsistent with the modifier used or a required modifier is missing.
+PR49,The diagnosis is inconsistent with the procedure. | These are non-covered services because this is a routine exam or screening procedure done in conjunction with a routine exam.
+PR5,The claim/service has been transferred to the proper payer/processor for processing. Claim/service not covered by this payer/processor. | The procedure code/bill type is inconsistent with the place of service.
+PR50,The diagnosis is inconsistent with the procedure. | These are non-covered services because this is not deemed a 'medical necessity' by the payer.
+PR51,The diagnosis is inconsistent with the patient's gender. | These are non-covered services because this is a pre-existing condition
+PR55,Claim/service denied because procedure/treatment has not been deemed 'proven to be effective' by the payer. | Claim/service denied because procedure/treatment is deemed experimental/investigational by the payer.
+PR58,Payment adjusted because this care may be covered by another payer per coordination of benefits. | Payment adjusted because treatment was deemed by the payer to have been rendered in an inappropriate or invalid place of service.
+PR59,Charges adjusted as penalty for failure to obtain second surgical opinion.. | Charges are adjusted based on multiple surgery rules or concurrent anesthesia rules.
+PR6,The claim/service has been transferred to the proper payer/processor for processing. Claim/service not covered by this payer/processor. | The procedure/revenue code is inconsistent with the patient's age.
+PR9,SERVICES NOT DOCUMENTED IN PATIENTS' MEDICAL RECORDS. | The diagnosis is inconsistent with the patient's age.
+PR96,No reply from subscriber; other insurance. | Non-covered charge(s). This change to be effective 4/1/2007: At least one Remark Code must be provided (may be comprised of either the Remittance Advice Remark Code or NCPDP Reject Reason Code.)
+PR97,Payer claim control number is required. | Payment adjusted because the benefit for this service is included in the payment/allowance for another service/procedure that has already been adjudicated
+PRA2,CONTRACTUAL ADJUSTMENT. | Contractual adjustment.
+PRB11,Services not authorized by network/primary care providers. | The claim/service has been transferred to the proper payer/processor for processing. Claim/service not covered by this payer/processor.
+PRB15,Payment adjusted because this care may be covered by another payer per coordination of benefits. | Payment adjusted because this service/procedure requires that a qualifying service/procedure be received and covered. The qualifying other service/procedure has not been received/adjudicated.
+PRB22,THE PROCEDURE/REVENUE CODE IS INCONSISTENT WITH THE PATIENT'S AGE. | This payment is adjusted based on the diagnosis.
+PRB7,THE RENDERING PROVIDER IS NOT ELIGIBLE TO PERFORM THE SERVICE BILLED. | This provider was not certified/eligible to be paid for this procedure/service on this date of service.
+PRB8,"Claim/service lacks information which is needed for adjudication. Additional information is supplied using remittance advice remarks codes whenever appropriate. This change to be effective 4/1/2007: At least one Remark Code must be provided. | Claim/service not covered/reduced because alternative services were available, and should have been utilized."
+PRB9,Sequestration - Reduction in Federal Spending. | Services not covered because the patient is enrolled in a Hospice.
+PRD21,The disposition of this claim/service is pending further review. | This (these) diagnosis(es) is (are) missing or are invalid
