@@ -20,8 +20,6 @@ AppPublisher={#MyAppPublisher}
 DefaultDirName={autopf}\{#MyAppName}
 DefaultGroupName={#MyAppName}
 AllowNoIcons=yes
-LicenseFile=LICENSE.txt
-InfoBeforeFile=CONFIG_README.md
 OutputDir=installer_output
 OutputBaseFilename=835-EDI-Parser-Setup-v{#MyAppVersion}
 Compression=lzma
@@ -46,14 +44,14 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 ; Main executable (built by PyInstaller)
 Source: "dist\{#MyAppExeName}"; DestDir: "{app}"; Flags: ignoreversion
 
-; Documentation
-Source: "CONFIG_README.md"; DestDir: "{app}"; Flags: ignoreversion
-Source: "835_config.example.json"; DestDir: "{app}"; Flags: ignoreversion
+; Documentation (optional - will skip if missing)
+Source: "CONFIG_README.md"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
+Source: "835_config.example.json"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
+Source: "LICENSE.txt"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
 
 [Icons]
 ; Start Menu shortcut
 Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
-Name: "{group}\Configuration Guide"; Filename: "{app}\CONFIG_README.md"
 Name: "{group}\{cm:UninstallProgram,{#MyAppName}}"; Filename: "{uninstallexe}"
 
 ; Desktop icon (optional)
