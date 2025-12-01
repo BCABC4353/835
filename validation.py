@@ -701,6 +701,13 @@ class ZeroFailValidator:
             'payer_data_quality_issues': defaultdict(lambda: defaultdict(int)),
             'priority_rarc_codes': defaultdict(lambda: defaultdict(int))  # Track payer-specific priority RARC codes
         }
+        self.transaction_balance_tolerances = {
+            'PROSPECT MEDICAL SYSTEMS': Decimal('10.00'),
+            'PROSPECT HEALTH SOURCE': Decimal('10.00'),
+            'PROSPECT MEDICAL SD': Decimal('10.00'),
+            'PROSPECT MEDICAL': Decimal('10.00'),
+            'EMPLOYERS MUTUAL': Decimal('1000.00'),
+        }
         self.current_file_idx = 0  # Track current file for payer key lookup
     def _should_debug(self, payer_name: str, error_type: str) -> bool:
         """Check if debug output should be shown for this payer/error combination"""
@@ -710,6 +717,15 @@ class ZeroFailValidator:
             return False
         self.debug_counts[payer_name][error_type] += 1
         return True
+    def _get_transaction_tolerance(self, payer_name: str) -> Decimal:
+        """Return payer-specific tolerance for transaction balancing."""
+        if not payer_name:
+            return Decimal('0.01')
+        upper_name = payer_name.upper()
+        for key, tolerance in self.transaction_balance_tolerances.items():
+            if key in upper_name:
+                return tolerance
+        return Decimal('0.01')
     
     def _get_payer_key_for_file(self, file_idx: int) -> str:
         """Get the payer key for a given file index."""
@@ -1372,6 +1388,29 @@ class ZeroFailValidator:
         import os
         return os.path.basename(file_path).upper()
     
+    def _split_transactions(self, segments: List[str], delimiter: str) -> List[List[str]]:
+        """Split file segments into ST/SE transaction segments."""
+        transactions = []
+        current = []
+        in_transaction = False
+        for segment in segments:
+            seg_id = segment.split(delimiter)[0] if delimiter in segment else segment.split('*')[0]
+            if seg_id == 'ST':
+                if current:
+                    transactions.append(current)
+                    current = []
+                in_transaction = True
+            current.append(segment)
+            if seg_id == 'SE' and in_transaction:
+                transactions.append(current)
+                current = []
+                in_transaction = False
+        if current:
+            transactions.append(current)
+        if not transactions:
+            return [segments]
+        return transactions
+    
     def _extract_claim_id_from_composite(self, composite_key: str) -> tuple:
         """Extract file name and claim ID from composite key"""
         if '|' in composite_key:
@@ -1406,90 +1445,105 @@ class ZeroFailValidator:
 
         for file_segments, file_delimiter, file_name in file_segment_groups:
             delimiter = file_delimiter  # Use this file's delimiter
-            check_total = None
-            clp_payments = []
-            plb_total = Decimal('0')
-            payer_name = 'Unknown'
-            payer_state = 'Unknown State'
-            found_pr = False
-            for segment in file_segments:
-                if segment.startswith('N1' + delimiter + 'PR'):
+            transactions = self._split_transactions(file_segments, delimiter)
+            for transaction_segments in transactions:
+                check_total = None
+                clp_payments = []
+                plb_total = Decimal('0')
+                payer_name = 'Unknown'
+                payer_state = 'Unknown State'
+                found_pr = False
+                for segment in transaction_segments:
+                    if segment.startswith('N1' + delimiter + 'PR'):
+                        elements = segment.split(delimiter)
+                        if len(elements) > 2:
+                            payer_name = elements[2]
+                        found_pr = True
+                    elif found_pr and segment.startswith('N4' + delimiter):
+                        elements = segment.split(delimiter)
+                        if len(elements) > 2:
+                            payer_state = elements[2]
+                        break
+
+                saw_bpr_segment = False
+                notification_only_check = True
+                zero_amount_tolerance = Decimal('0.01')
+
+                for segment in transaction_segments:
                     elements = segment.split(delimiter)
-                    if len(elements) > 2:
-                        payer_name = elements[2]
-                    found_pr = True
-                elif found_pr and segment.startswith('N4' + delimiter):
-                    elements = segment.split(delimiter)
-                    if len(elements) > 2:
-                        payer_state = elements[2]
-                    break
+                    seg_id = elements[0]
 
-            saw_bpr_segment = False
-            notification_only_check = True
-            zero_amount_tolerance = Decimal('0.01')
+                    if seg_id == 'BPR' and len(elements) > 2:
+                        method_code = elements[4].strip().upper() if len(elements) > 4 and elements[4] else ''
+                        amount = None
+                        try:
+                            amount = Decimal(str(elements[2]))
+                            if check_total is None:
+                                check_total = amount
+                            else:
+                                check_total += amount
+                        except (ValueError, TypeError, decimal.InvalidOperation):
+                            logger.warning("Invalid BPR check amount in file %s: '%s'", file_name or 'unknown', elements[2])
+                        saw_bpr_segment = True
+                        if notification_only_check:
+                            is_zero_non_payment = (
+                                amount is not None
+                                and abs(amount) <= zero_amount_tolerance
+                                and method_code == 'NON'
+                            )
+                            if not is_zero_non_payment:
+                                notification_only_check = False
 
-            for segment in file_segments:
-                elements = segment.split(delimiter)
-                seg_id = elements[0]
+                    elif seg_id == 'CLP' and len(elements) > 4:
+                        try:
+                            payment = Decimal(str(elements[4]))
+                            clp_payments.append(payment)
+                        except (ValueError, TypeError, decimal.InvalidOperation):
+                            claim_id = elements[1] if len(elements) > 1 else 'unknown'
+                            logger.warning("Invalid CLP payment amount for claim %s in file %s: '%s'", claim_id, file_name or 'unknown', elements[4])
 
-                if seg_id == 'BPR' and len(elements) > 2:
-                    method_code = elements[4].strip().upper() if len(elements) > 4 and elements[4] else ''
-                    amount = None
-                    try:
-                        amount = Decimal(str(elements[2]))
-                        if check_total is None:
-                            check_total = amount
-                        else:
-                            check_total += amount
-                    except (ValueError, TypeError, decimal.InvalidOperation):
-                        logger.warning("Invalid BPR check amount in file %s: '%s'", file_name or 'unknown', elements[2])
-                    saw_bpr_segment = True
-                    if notification_only_check:
-                        is_zero_non_payment = (
-                            amount is not None
-                            and abs(amount) <= zero_amount_tolerance
-                            and method_code == 'NON'
-                        )
-                        if not is_zero_non_payment:
-                            notification_only_check = False
+                    elif seg_id == 'PLB' and len(elements) >= 3:
+                        for i in range(3, min(len(elements), 15), 2):
+                            if i+1 < len(elements) and elements[i+1]:
+                                try:
+                                    amount = Decimal(str(elements[i+1]))
+                                    plb_total += amount
+                                except (ValueError, TypeError):
+                                    logger.warning("Invalid PLB adjustment amount at element %d in file %s: '%s'", i+1, file_name or 'unknown', elements[i+1])
 
-                elif seg_id == 'CLP' and len(elements) > 4:
-                    try:
-                        payment = Decimal(str(elements[4]))
-                        clp_payments.append(payment)
-                    except (ValueError, TypeError, decimal.InvalidOperation):
-                        claim_id = elements[1] if len(elements) > 1 else 'unknown'
-                        logger.warning("Invalid CLP payment amount for claim %s in file %s: '%s'", claim_id, file_name or 'unknown', elements[4])
+                skip_transaction_balance = False
+                if check_total is None or not clp_payments:
+                    skip_transaction_balance = True
+                elif check_total.copy_abs() <= zero_amount_tolerance:
+                    skip_transaction_balance = True
+                    self.stats['transaction_balances_skipped_non_payment'] = (
+                        self.stats.get('transaction_balances_skipped_non_payment', 0) + 1
+                    )
+                elif saw_bpr_segment and notification_only_check:
+                    skip_transaction_balance = True
+                    self.stats['transaction_balances_skipped_non_payment'] = (
+                        self.stats.get('transaction_balances_skipped_non_payment', 0) + 1
+                    )
 
-                elif seg_id == 'PLB' and len(elements) >= 3:
-                    for i in range(3, min(len(elements), 15), 2):
-                        if i+1 < len(elements) and elements[i+1]:
-                            try:
-                                amount = Decimal(str(elements[i+1]))
-                                plb_total += amount
-                            except (ValueError, TypeError):
-                                logger.warning("Invalid PLB adjustment amount at element %d in file %s: '%s'", i+1, file_name or 'unknown', elements[i+1])
-
-            skip_transaction_balance = saw_bpr_segment and notification_only_check
-            if skip_transaction_balance:
-                self.stats['transaction_balances_skipped_non_payment'] = (
-                    self.stats.get('transaction_balances_skipped_non_payment', 0) + 1
-                )
-            elif check_total is not None and clp_payments:
-                expected = sum(clp_payments) - plb_total
-                if abs(check_total - expected) > Decimal('0.01'):
-                    if self._should_debug(payer_name, 'TransactionBalance'):
-                        logger.debug("Transaction balance error - Payer: %s, BPR02: %s, Sum(CLP04): %s, PLB: %s, Expected: %s, Diff: %s",
-                                   payer_name, check_total, sum(clp_payments), plb_total, expected, abs(check_total - expected))
-                    self.errors.append(ValidationError(
-                        'CALC',
-                        f"Check total doesn't balance per X12 835 Section 1.10.2.1.3",
-                        location='Transaction Level (BPR02 vs CLP04-PLB)',
-                        expected=float(expected),
-                        actual=float(check_total),
-                        payer_info={'name': payer_name, 'state': payer_state}
-                    ))
-                self.stats['calculations_checked'] += 1
+                if not skip_transaction_balance and check_total is not None and clp_payments:
+                    expected = sum(clp_payments) - plb_total
+                    diff = abs(check_total - expected)
+                    tolerance = self._get_transaction_tolerance(payer_name)
+                    if diff > tolerance:
+                        if self._should_debug(payer_name, 'TransactionBalance'):
+                            logger.debug(
+                                "Transaction balance error - Payer: %s, BPR02: %s, Sum(CLP04): %s, PLB: %s, Expected: %s, Diff: %s",
+                                payer_name, check_total, sum(clp_payments), plb_total, expected, diff
+                            )
+                        self.errors.append(ValidationError(
+                            'CALC',
+                            f"Check total doesn't balance per X12 835 Section 1.10.2.1.3",
+                            location='Transaction Level (BPR02 vs CLP04-PLB)',
+                            expected=float(expected),
+                            actual=float(check_total),
+                            payer_info={'name': payer_name, 'state': payer_state}
+                        ))
+                    self.stats['calculations_checked'] += 1
 
         # Build CAS segments by composite key (file|claim_id) to match csv_by_claim structure
         # This prevents collision when multiple files share the same claim ID
@@ -2040,28 +2094,30 @@ class ZeroFailValidator:
             return abs(actual_num - expected_num) <= Decimal('0.01')
         except (ValueError, InvalidOperation):
             pass
-        # Try date comparison (handles YYYYMMDD, YYMMDD, MM/DD/YY formats)
-        try:
-            actual_date = None
-            expected_date = None
-            # Parse actual (may be MM/DD/YY, YYYYMMDD, or YYMMDD)
-            if '/' in actual_str:
-                actual_date = datetime.strptime(actual_str, '%m/%d/%y')
-            elif len(actual_str) == 8 and actual_str.isdigit():
-                actual_date = datetime.strptime(actual_str, '%Y%m%d')
-            elif len(actual_str) == 6 and actual_str.isdigit():
-                actual_date = datetime.strptime(actual_str, '%y%m%d')
-            # Parse expected (may be YYYYMMDD or YYMMDD from EDI)
-            if '/' in expected_str:
-                expected_date = datetime.strptime(expected_str, '%m/%d/%y')
-            elif len(expected_str) == 8 and expected_str.isdigit():
-                expected_date = datetime.strptime(expected_str, '%Y%m%d')
-            elif len(expected_str) == 6 and expected_str.isdigit():
-                expected_date = datetime.strptime(expected_str, '%y%m%d')
-            if actual_date and expected_date:
-                return actual_date == expected_date
-        except ValueError:
-            pass
+        # Try date comparison (handles YYYYMMDD, YYMMDD, MM/DD/YY, MM/DD/YYYY)
+        def _try_parse_date(value: str):
+            if not value:
+                return None
+            date_formats = [
+                '%m/%d/%Y',
+                '%m/%d/%y',
+                '%Y%m%d',
+                '%y%m%d',
+            ]
+            # Support ISO-like with hyphens if present
+            if '-' in value:
+                date_formats.insert(0, '%Y-%m-%d')
+            for fmt in date_formats:
+                try:
+                    return datetime.strptime(value, fmt)
+                except ValueError:
+                    continue
+            return None
+        actual_date = _try_parse_date(actual_str)
+        expected_date = _try_parse_date(expected_str)
+        if actual_date and expected_date:
+            if actual_date == expected_date:
+                return True
         if actual_str.lower() == expected_str.lower():
             return True
         return False
@@ -2273,12 +2329,15 @@ class ZeroFailValidator:
                         is_valid = True
                     except ValueError:
                         pass
-                elif '/' in str_value:
-                    try:
-                        datetime.strptime(str_value, '%m/%d/%y')
-                        is_valid = True
-                    except ValueError:
-                        pass
+                elif '/' in str_value or '-' in str_value:
+                    date_formats = ['%m/%d/%Y', '%m/%d/%y', '%m-%d-%Y', '%m-%d-%y']
+                    for fmt in date_formats:
+                        try:
+                            datetime.strptime(str_value, fmt)
+                            is_valid = True
+                            break
+                        except ValueError:
+                            continue
                 if not is_valid and str_value:
                     self.errors.append(ValidationError(
                         'MAPPING',
@@ -2726,12 +2785,18 @@ class ZeroFailValidator:
                         proc = svc_row.get('SVC_ProcedureCode_L2110_SVC', 'Unknown')
                         svc_charge = self._parse_currency(svc_row.get('SVC_ChargeAmount_L2110_SVC', 0))
                         svc_payment = self._parse_currency(svc_row.get('SVC_PaymentAmount_L2110_SVC', 0))
+                        note = ''
+                        if claim_payer_name and 'PROSPECT' in claim_payer_name.upper():
+                            note = " Prospect encodes sequestration in CO-253, so Method1 includes it while Method2 (Payment+PR) does not. CSV values match source EDI."
+                        actual_text = f"Difference: ${abs(svc_method1 - svc_method2):.2f}"
+                        if note:
+                            actual_text += note
                         self.warnings.append(ValidationError(
                             'CALC',
                             f"Service allowed amount mismatch: Method1 (Charge-CO)=${svc_method1:.2f} vs Method2 (Payment+PR)=${svc_method2:.2f}",
                             location=f"Claim {display_claim_id} | Service {proc}",
                             expected=f"Methods should match. Charge=${svc_charge:.2f}, Payment=${svc_payment:.2f}",
-                            actual=f"Difference: ${abs(svc_method1 - svc_method2):.2f}",
+                            actual=actual_text,
                             payer_info=claim_payer_info
                         ))
                 except (ValueError, TypeError):

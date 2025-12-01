@@ -4334,6 +4334,19 @@ def process_folder(folder_path, enable_redaction=False, status_callback=None):
             logger.info("  Calculations Checked: %d", summary.get('calculations_checked', 0))
             logger.info("  Errors Found: %d", errors)
             logger.info("  Warnings: %d", warnings)
+            logger.info("=" * 80)
+            logger.info("DETAILED REPORTS")
+            logger.info("=" * 80)
+            logger.info("  Text Report: %s", validation_output)
+            logger.info("  HTML Report: %s", validation_html)
+            try:
+                html_uri = Path(validation_html).resolve().as_uri()
+                logger.info("  Open HTML Report: %s", html_uri)
+                if status_callback:
+                    status_callback(f"HTML report ready: {html_uri}")
+            except Exception:
+                if status_callback:
+                    status_callback(f"HTML report saved to: {validation_html}")
 
             # Show payer data quality issues
             payer_quality_issues = validation_result.get('payer_data_quality_issues', {})

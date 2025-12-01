@@ -192,7 +192,7 @@ def format_currency(value):
 
 def format_date(value):
     """
-    Format a date value to MM/DD/YY format with leading zeros.
+    Format a date value to MM/DD/YYYY format with leading zeros.
     
     Handles:
     - datetime objects
@@ -211,9 +211,9 @@ def format_date(value):
     
     # Handle datetime/date objects
     if isinstance(value, datetime):
-        return value.strftime('%m/%d/%y')
+        return value.strftime('%m/%d/%Y')
     if isinstance(value, date):
-        return value.strftime('%m/%d/%y')
+        return value.strftime('%m/%d/%Y')
     
     # Convert to string
     text = str(value).strip()
@@ -242,7 +242,7 @@ def format_date(value):
             if expected_len and len(text) != expected_len:
                 continue
             parsed = datetime.strptime(text[:expected_len] if expected_len else text.split('.')[0], fmt)
-            return parsed.strftime('%m/%d/%y')
+            return parsed.strftime('%m/%d/%Y')
         except (ValueError, TypeError):
             continue
     
@@ -333,19 +333,6 @@ def normalize_value(value, field_name=None):
     # If empty after stripping, return empty string
     if not text:
         return ''
-    
-    # Check if this looks like a date by value pattern (fallback for unlabeled fields)
-    # Uses pre-compiled regex patterns for performance
-    formatted_date = None
-    if _YYYYMMDD_PATTERN.match(text):  # YYYYMMDD pattern
-        formatted_date = format_date(text)
-    elif _YYMMDD_PATTERN.match(text):  # YYMMDD pattern
-        formatted_date = format_date(text)
-    elif _ISO_DATE_PATTERN.match(text):  # YYYY-MM-DD pattern
-        formatted_date = format_date(text)
-    
-    if formatted_date:
-        return formatted_date
     
     # Uppercase
     text = text.upper()
