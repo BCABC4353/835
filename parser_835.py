@@ -5,7 +5,7 @@ import traceback
 import logging
 from collections import defaultdict
 from datetime import datetime
-from decimal import Decimal, ROUND_HALF_UP
+from decimal import Decimal, ROUND_HALF_UP, InvalidOperation
 import csv
 import dictionary
 import redactor
@@ -364,6 +364,7 @@ DISPLAY_COLUMN_NAMES = {
     'FH_IN_Miles': 'IN NETWORK MILES',
     'FH_OON_Final': 'OUT OF NETWORK FINAL',
     'FH_IN_Final': 'IN NETWORK FINAL',
+    'FH_EffectiveUnits': 'FAIR HEALTH UNITS USED',
 }
 
 
@@ -3826,21 +3827,9 @@ def create_output_row(claim, service, header_payer_name, payer_address, payer_ad
     # Mileage codes (A0425 is ground mileage, based on 15 miles in Fair Health)
     MILEAGE_CODES = ['A0425', 'A0435', 'A0436']  # Ground, fixed wing, rotary wing mileage
     FH_MILEAGE_BASE_UNITS = 15  # Fair Health mileage rates are based on 15 miles
+    BASE_RATE_CODES = {'A0426', 'A0427', 'A0428', 'A0429', 'A0433', 'A0434'}
     
     is_mileage_code = hcpcs_code.upper() in MILEAGE_CODES if hcpcs_code else False
-    
-    # Calculate EDI mileage unit price (charge per mile) - using Decimal for precision
-    edi_mileage_unit_price = ''
-    if is_mileage_code and service:
-        try:
-            charge = Decimal(str(service.get('line_charged', 0) or 0))
-            units = Decimal(str(service.get('units', 0) or 0))
-            if units > 0:
-                edi_mileage_unit_price = str((charge / units).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP))
-        except (ValueError, TypeError, ArithmeticError):
-            pass
-    
-    row['EDI_MileageUnitPrice'] = edi_mileage_unit_price
     
     # Helper to filter out undefined/N/A values - returns empty string for non-numeric values
     def clean_rate(rate):
@@ -3858,6 +3847,28 @@ def create_output_row(claim, service, header_payer_name, payer_address, payer_ad
         except (ValueError, TypeError):
             return ''
     
+    def parse_positive_decimal(value):
+        """Return Decimal for positive numeric strings, else None."""
+        if value is None:
+            return None
+        value_str = str(value).strip()
+        if not value_str:
+            return None
+        try:
+            dec_value = Decimal(value_str)
+        except (InvalidOperation, ValueError, TypeError):
+            return None
+        return dec_value if dec_value > 0 else None
+
+    def format_units(value):
+        if not value or value <= 0:
+            return ''
+        normalized = value.normalize()
+        text = format(normalized, 'f')
+        if '.' in text:
+            text = text.rstrip('0').rstrip('.')
+        return text or '0'
+
     # Get pickup ZIP from Trips.csv using RUN
     processor = _get_processor()
     run_number = format_run_number(claim['claim_number'])
@@ -3866,13 +3877,30 @@ def create_output_row(claim, service, header_payer_name, payer_address, payer_ad
     # Add Fair Health columns based on matched ZIP
     row['FH_PickupZIP'] = pickup_zip or ''
     
-    # Get service units for mileage calculations
-    service_units = 0
-    if service:
+    paid_units_decimal = parse_positive_decimal(service.get('units')) if service else None
+    original_units_decimal = parse_positive_decimal(service.get('original_units')) if service else None
+    effective_units_decimal = paid_units_decimal or original_units_decimal
+    service_units_decimal = effective_units_decimal if effective_units_decimal is not None else Decimal('0')
+    
+    display_units_decimal = service_units_decimal
+    if not display_units_decimal or display_units_decimal <= 0:
+        if is_mileage_code:
+            display_units_decimal = Decimal(str(FH_MILEAGE_BASE_UNITS))
+        elif hcpcs_code.upper() in BASE_RATE_CODES:
+            display_units_decimal = Decimal('1')
+    row['FH_EffectiveUnits'] = format_units(display_units_decimal)
+    
+    # Calculate EDI mileage unit price (charge per mile) with fallback units - using Decimal for precision
+    edi_mileage_unit_price = ''
+    if is_mileage_code and service and effective_units_decimal:
         try:
-            service_units = float(service.get('units', 0) or 0)
-        except (ValueError, TypeError):
-            service_units = 0
+            charge = Decimal(str(service.get('line_charged', 0) or 0))
+            edi_mileage_unit_price = str(
+                (charge / effective_units_decimal).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+            )
+        except (ValueError, TypeError, ArithmeticError, InvalidOperation):
+            pass
+    row['EDI_MileageUnitPrice'] = edi_mileage_unit_price
     
     if pickup_zip and processor.fair_health_rates:
         # Use O(1) direct lookup instead of building full ZIP dict
@@ -3906,23 +3934,27 @@ def create_output_row(claim, service, header_payer_name, payer_address, payer_ad
                 # Mileage totals (unit price × service units)
                 oon_miles = ''
                 in_miles = ''
-                if oon_unit_price and service_units > 0:
+                if oon_unit_price and service_units_decimal > 0:
                     try:
-                        oon_miles = str((Decimal(str(oon_unit_price)) * Decimal(str(service_units))).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP))
-                    except (ValueError, TypeError, ArithmeticError):
+                        oon_miles = str((Decimal(str(oon_unit_price)) * service_units_decimal).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP))
+                    except (ValueError, TypeError, ArithmeticError, InvalidOperation):
                         pass
-                if in_unit_price and service_units > 0:
+                if in_unit_price and service_units_decimal > 0:
                     try:
-                        in_miles = str((Decimal(str(in_unit_price)) * Decimal(str(service_units))).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP))
-                    except (ValueError, TypeError, ArithmeticError):
+                        in_miles = str((Decimal(str(in_unit_price)) * service_units_decimal).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP))
+                    except (ValueError, TypeError, ArithmeticError, InvalidOperation):
                         pass
                 
                 row['FH_OON_Miles'] = oon_miles
                 row['FH_IN_Miles'] = in_miles
                 
-                # Final amounts (use mileage calculation for mileage codes)
-                row['FH_OON_Final'] = oon_miles
-                row['FH_IN_Final'] = in_miles
+                # Final amounts (use mileage calculation when units are known, otherwise fall back to base rate)
+                if service_units_decimal > 0:
+                    row['FH_OON_Final'] = oon_miles
+                    row['FH_IN_Final'] = in_miles
+                else:
+                    row['FH_OON_Final'] = oon_rate
+                    row['FH_IN_Final'] = in_rate
             else:
                 # Non-mileage codes: no unit prices or mileage
                 row['FH_OON_UnitPrice'] = ''
