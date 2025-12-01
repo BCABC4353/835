@@ -67,6 +67,6 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon=None,  # Add icon='app_icon.ico' if you create an icon file
+    icon='app_icon.ico',
     version_file=None,
 )
