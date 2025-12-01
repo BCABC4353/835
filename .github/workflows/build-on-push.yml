@@ -31,6 +31,9 @@ jobs:
     - name: Install InnoSetup
       run: choco install innosetup -y
 
+    - name: Create installer output directory
+      run: mkdir -p installer_output
+
     - name: Build installer with InnoSetup
       run: |
         & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer.iss
