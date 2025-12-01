@@ -55,20 +55,9 @@ jobs:
         path: installer_output/*.exe
         retention-days: 30
 
-    - name: Comment on commit with download link
-      uses: actions/github-script@v7
-      with:
-        script: |
-          const workflow_run = context.payload.workflow_run || context.payload;
-          const message = `✅ **Installer built successfully!**
-
-          📦 Download: [835-EDI-Parser-Setup-${{ steps.commit_info.outputs.short_sha }}](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})
-
-          Click "Summary" → "Artifacts" to download the installer.`;
-
-          github.rest.repos.createCommitComment({
-            owner: context.repo.owner,
-            repo: context.repo.repo,
-            commit_sha: context.sha,
-            body: message
-          });
+    - name: Build summary
+      run: |
+        echo "✅ Installer built successfully!" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "📦 Download from Artifacts section above" >> $GITHUB_STEP_SUMMARY
+        echo "File: 835-EDI-Parser-Setup-${{ steps.commit_info.outputs.short_sha }}.exe" >> $GITHUB_STEP_SUMMARY
