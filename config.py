@@ -81,6 +81,7 @@ class Config:
     def _auto_discover_config(self):
         """Auto-discover config file in standard locations"""
         search_paths = [
+            self._get_default_config_path(),  # Check user AppData first
             Path.cwd() / '835_config.json',
             Path.home() / '835_config.json',
             Path.cwd() / '.835config',
@@ -207,12 +208,16 @@ class Config:
 
         Args:
             file_path: Path to save config. If None, uses loaded config file path
-                      or defaults to '835_config.json' in current directory.
+                      or defaults to user-writable config location.
         """
         if file_path is None:
-            file_path = self._config_file_path or Path.cwd() / '835_config.json'
+            file_path = self._config_file_path or self._get_default_config_path()
         else:
             file_path = Path(file_path)
+
+        # Ensure parent directory exists
+        file_path = Path(file_path)
+        file_path.parent.mkdir(parents=True, exist_ok=True)
 
         try:
             with open(file_path, 'w') as f:
@@ -220,6 +225,25 @@ class Config:
             logger.info("Saved configuration to: %s", file_path)
         except Exception as e:
             logger.error("Error saving config to %s: %s", file_path, e)
+
+    def _get_default_config_path(self) -> Path:
+        """
+        Get default config file path in user-writable location.
+
+        Returns:
+            Path to config file in AppData (Windows) or home directory (Unix)
+        """
+        # Try Windows AppData first
+        appdata = os.getenv('APPDATA')
+        if appdata:
+            config_dir = Path(appdata) / '835-EDI-Parser'
+            config_dir.mkdir(parents=True, exist_ok=True)
+            return config_dir / '835_config.json'
+
+        # Fallback to home directory
+        config_dir = Path.home() / '.835-parser'
+        config_dir.mkdir(parents=True, exist_ok=True)
+        return config_dir / '835_config.json'
 
     def __repr__(self) -> str:
         return f"Config({len(self._config)} settings loaded)"

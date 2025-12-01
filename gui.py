@@ -118,8 +118,9 @@ class SettingsDialog:
                   command=lambda: self._browse_file(self.rates_var, "RATES.xlsx", [("Excel files", "*.xlsx")])).pack(side=tk.LEFT)
         
         # Info about config file
+        config_path = self.config._get_default_config_path()
         info_label = ttk.Label(main_frame,
-                              text="Settings are saved to 835_config.json in the application directory.",
+                              text=f"Settings saved to: {config_path}",
                               font=('Segoe UI', 8),
                               foreground='#999999')
         info_label.pack(pady=(20, 10))
