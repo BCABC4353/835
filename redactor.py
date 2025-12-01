@@ -285,7 +285,7 @@ def normalize_value(value, field_name=None):
     Normalize a single value: uppercase, strip whitespace, clean stray characters.
     Formats dates to MM/DD/YY format and currency to $X,XXX.XX format.
     
-    - Dates: formatted to MM/DD/YY with leading zeros
+    - Dates: formatted to MM/DD/YY with leading zeros (checked FIRST by field name)
     - Currency: formatted with $ sign and commas (e.g., $1,234.56)
     - Strings: uppercase, strip leading/trailing whitespace, collapse internal whitespace
     - Numbers: formatted as currency if field indicates money
@@ -297,6 +297,16 @@ def normalize_value(value, field_name=None):
     # Handle datetime/date objects directly
     if isinstance(value, (datetime, date)):
         return value.strftime('%m/%d/%y')
+    
+    # Check for date fields FIRST by field name - prevents "PaymentDate" from being 
+    # formatted as currency due to containing "Payment"
+    if field_name and is_date_field(field_name):
+        if isinstance(value, str):
+            text = value.strip()
+            if text:
+                formatted_date = format_date(text)
+                if formatted_date:
+                    return formatted_date
     
     # Check if this is a currency field - format numeric types
     if field_name and is_currency_field(field_name):
@@ -324,12 +334,10 @@ def normalize_value(value, field_name=None):
     if not text:
         return ''
     
-    # Check if this looks like a date (by field name or by value pattern)
+    # Check if this looks like a date by value pattern (fallback for unlabeled fields)
     # Uses pre-compiled regex patterns for performance
     formatted_date = None
-    if field_name and is_date_field(field_name):
-        formatted_date = format_date(text)
-    elif _YYYYMMDD_PATTERN.match(text):  # YYYYMMDD pattern
+    if _YYYYMMDD_PATTERN.match(text):  # YYYYMMDD pattern
         formatted_date = format_date(text)
     elif _YYMMDD_PATTERN.match(text):  # YYMMDD pattern
         formatted_date = format_date(text)

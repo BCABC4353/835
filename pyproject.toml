@@ -1,0 +1,27 @@
+[project]
+name = "edi-835-parser"
+version = "1.0.0"
+description = "Parser for HIPAA 835 EDI remittance files with Fair Health rate lookup"
+readme = "CONFIG_README.md"
+requires-python = ">=3.8"
+license = {text = "Proprietary"}
+
+dependencies = [
+    "openpyxl>=3.1.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "mypy",
+]
+
+[build-system]
+requires = ["setuptools>=65", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project.scripts]
+edi-835-parser = "parser_835:main"
+
+[project.gui-scripts]
+edi-835-parser-gui = "gui:main"
+

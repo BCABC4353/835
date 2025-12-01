@@ -12,9 +12,12 @@ Column mapping from source Excel:
 - "In-Network" = Rate 2
 """
 
+import logging
 import re
 from datetime import date, datetime, timedelta
 from typing import Any, Dict, List, Optional, Tuple, Union
+
+logger = logging.getLogger(__name__)
 
 try:
     import openpyxl
@@ -411,9 +414,10 @@ class FairHealthRates:
 
 if __name__ == "__main__":
     import sys
+    logging.basicConfig(level=logging.INFO, format='%(message)s')
     
     if len(sys.argv) < 2:
-        print("Usage: python rates.py <excel_file>")
+        logger.error("Usage: python rates.py <excel_file>")
         sys.exit(1)
     
     filepath = sys.argv[1]
@@ -421,10 +425,10 @@ if __name__ == "__main__":
     
     try:
         stats = rates.load_from_excel(filepath)
-        print(f"Loaded {stats['rate_keys']} rate combinations")
-        print(rates.summary())
+        logger.info("Loaded %d rate combinations", stats['rate_keys'])
+        logger.info(rates.summary())
     except Exception as e:
-        print(f"Error loading rates: {e}")
+        logger.error("Error loading rates: %s", e)
         import traceback
         traceback.print_exc()
         sys.exit(1)

@@ -4,7 +4,7 @@ Colloquial Payer Override System
 
 This module handles payer-specific overrides for 835 EDI processing. It provides a
 centralized location for managing non-standard behaviors from specific payers,
-allowing the main parser (835.py) and validation (validation.py) to remain 
+allowing the main parser (parser_835.py) and validation (validation.py) to remain 
 standard-compliant while accommodating real-world variations.
 
 ================================================================================
@@ -69,10 +69,10 @@ If the payer uses codes not in the standard dictionary:
   - Prefix description with [STATE] for state-specific codes
   - Example: 'N908': '[CA] Alert: This claim was paid using a state supplemental payment'
 
-STEP 4: NO CHANGES NEEDED TO 835.py OR validation.py
+STEP 4: NO CHANGES NEEDED TO parser_835.py OR validation.py
 ----------------------------------------------------
 The main program and validation already call this module:
-  - 835.py calls identify_payer() and normalize_carc_code()
+  - parser_835.py calls identify_payer() and normalize_carc_code()
   - validation.py calls normalize_carc_code() for CARC validation
   - Payer-specific lookups use get_payer_reference_qualifier_description(), etc.
 
@@ -118,7 +118,7 @@ WHAT IS CURRENTLY IMPLEMENTED:
 - validation_overrides.allow_generic_payer_id → Skip generic payer ID warnings
 
 WHAT IS STUBBED BUT NOT YET WIRED UP:
-- parsing_rules: {}                    → Exists in registry but 835.py doesn't read it
+- parsing_rules: {}                    → Exists in registry but parser_835.py doesn't read it
 - Other dictionary code types          → Only reference_qualifiers implemented
 
 IF A PAYER HAS QUIRKS BEYOND CURRENT CAPABILITIES:
@@ -141,7 +141,7 @@ To handle different meanings for OTHER code types (PLB, entity IDs, dates, etc.)
    def get_payer_entity_description(payer_key, code): ...
    # Pattern matches get_payer_reference_qualifier_description()
 
-3. Update 835.py and validation.py to call the new functions
+3. Update parser_835.py and validation.py to call the new functions
 
 To handle CUSTOM PARSING (different loops, segments, element positions):
 
@@ -152,7 +152,7 @@ To handle CUSTOM PARSING (different loops, segments, element positions):
        "custom_segment_handler": "func_name" # For truly custom parsing
    }
 
-2. Add hooks in 835.py that check get_parsing_rules() before processing
+2. Add hooks in parser_835.py that check get_parsing_rules() before processing
 3. Implement handler functions for custom logic
 
 NOTE: The framework supports this extensibility - the hooks just need to be
@@ -177,6 +177,9 @@ Usage:
 """
 
 import dictionary
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 # =============================================================================
@@ -468,6 +471,61 @@ def get_parsing_rules(payer_key):
     return config.get("parsing_rules", {})
 
 
+def handle_custom_segment(payer_key, segment_id, elements):
+    """
+    Route to payer-specific segment handlers if defined.
+    
+    This allows payers to define custom parsing behavior for specific segments
+    when their 835 files deviate from the standard X12 structure.
+    
+    Args:
+        payer_key: Payer identifier key
+        segment_id: The segment type (e.g., 'CLP', 'SVC')
+        elements: The parsed segment elements
+        
+    Returns:
+        dict: Parsed segment data if custom handler exists, None otherwise
+    """
+    if not payer_key:
+        return None
+    
+    config = get_payer_config(payer_key)
+    parsing_rules = config.get('parsing_rules', {})
+    
+    # Check for a custom handler for this segment type
+    handler_name = parsing_rules.get(f'{segment_id.lower()}_handler')
+    
+    if handler_name:
+        # Look for the handler function in this module
+        import sys
+        current_module = sys.modules[__name__]
+        if hasattr(current_module, handler_name):
+            handler = getattr(current_module, handler_name)
+            return handler(segment_id, elements)
+    
+    return None  # Use standard parsing
+
+
+def get_payer_segment_element_count(payer_key, segment_id):
+    """
+    Get expected element count for a segment if payer uses non-standard count.
+    
+    Some payers may send segments with more or fewer elements than standard.
+    
+    Args:
+        payer_key: Payer identifier key
+        segment_id: The segment type (e.g., 'CLP', 'SVC')
+        
+    Returns:
+        int or None: Expected element count if override exists, None otherwise
+    """
+    if not payer_key:
+        return None
+    
+    rules = get_parsing_rules(payer_key)
+    return rules.get(f'{segment_id.lower()}_element_count')
+
+
 # =============================================================================
 # DICTIONARY OVERRIDE FUNCTIONS
 # =============================================================================
@@ -529,6 +587,74 @@ def get_payer_rarc_description(payer_key, code):
     """
     # Standard lookup - dictionary already contains all codes including CA-specific
     return dictionary.get_remark_code_description(code)
+
+
+def get_payer_plb_description(payer_key, code):
+    """
+    Get PLB adjustment code description with payer-first lookup.
+    
+    Args:
+        payer_key: Payer identifier key (can be None)
+        code: PLB adjustment reason code
+        
+    Returns:
+        str or None: Payer-specific description if found, None otherwise
+    """
+    if not payer_key:
+        return None
+    overrides = get_dictionary_overrides(payer_key)
+    return overrides.get('plb_adjustment_codes', {}).get(code)
+
+
+def get_payer_entity_description(payer_key, code):
+    """
+    Get entity identifier description with payer-first lookup.
+    
+    Args:
+        payer_key: Payer identifier key (can be None)
+        code: Entity identifier code
+        
+    Returns:
+        str or None: Payer-specific description if found, None otherwise
+    """
+    if not payer_key:
+        return None
+    overrides = get_dictionary_overrides(payer_key)
+    return overrides.get('entity_identifiers', {}).get(code)
+
+
+def get_payer_date_qualifier_description(payer_key, code):
+    """
+    Get date qualifier description with payer-first lookup.
+    
+    Args:
+        payer_key: Payer identifier key (can be None)
+        code: Date qualifier code
+        
+    Returns:
+        str or None: Payer-specific description if found, None otherwise
+    """
+    if not payer_key:
+        return None
+    overrides = get_dictionary_overrides(payer_key)
+    return overrides.get('date_qualifiers', {}).get(code)
+
+
+def get_payer_carc_description(payer_key, code):
+    """
+    Get CARC description with payer-first lookup.
+    
+    Args:
+        payer_key: Payer identifier key (can be None)
+        code: CARC (Claim Adjustment Reason Code)
+        
+    Returns:
+        str or None: Payer-specific description if found, None otherwise
+    """
+    if not payer_key:
+        return None
+    overrides = get_dictionary_overrides(payer_key)
+    return overrides.get('carc_codes', {}).get(code)
 
 
 def is_payer_priority_rarc(payer_key, code):
@@ -612,27 +738,27 @@ def print_payer_summary():
     Print a summary of all registered payers and their configurations.
     Useful for debugging and documentation.
     """
-    print("=" * 70)
-    print("REGISTERED PAYER OVERRIDES")
-    print("=" * 70)
+    logger.info("=" * 70)
+    logger.info("REGISTERED PAYER OVERRIDES")
+    logger.info("=" * 70)
     
     for payer_key, config in PAYER_REGISTRY.items():
-        print(f"\n{payer_key}:")
-        print(f"  Description: {config.get('description', 'N/A')}")
+        logger.info("\n%s:", payer_key)
+        logger.info("  Description: %s", config.get('description', 'N/A'))
         
         identifiers = config.get('identifiers', {})
-        print(f"  TRN03 IDs: {identifiers.get('trn03', [])}")
-        print(f"  Payer Names: {identifiers.get('payer_name', [])}")
+        logger.info("  TRN03 IDs: %s", identifiers.get('trn03', []))
+        logger.info("  Payer Names: %s", identifiers.get('payer_name', []))
         
-        print(f"  Normalize CARC Codes: {config.get('normalize_carc_codes', False)}")
+        logger.info("  Normalize CARC Codes: %s", config.get('normalize_carc_codes', False))
         
         notes = config.get('notes', [])
         if notes:
-            print("  Notes:")
+            logger.info("  Notes:")
             for note in notes:
-                print(f"    - {note}")
+                logger.info("    - %s", note)
     
-    print("\n" + "=" * 70)
+    logger.info("\n" + "=" * 70)
 
 
 # =============================================================================
@@ -738,43 +864,45 @@ def get_payer_specific_code_info(code):
 # =============================================================================
 
 if __name__ == "__main__":
-    # Self-test when run directly
-    print("Testing colloquial.py module...\n")
+    # Self-test when run directly - configure logging for console output
+    logging.basicConfig(level=logging.INFO, format='%(message)s')
+    
+    logger.info("Testing colloquial.py module...\n")
     
     # Test payer identification
-    print("Testing payer identification:")
+    logger.info("Testing payer identification:")
     
     # Test with TRN03
     payer = identify_payer(trn03="1999999999")
-    print(f"  TRN03='1999999999' -> {payer}")
+    logger.info("  TRN03='1999999999' -> %s", payer)
     assert payer == "MEDI_CAL", "Should identify Medi-Cal by TRN03"
     
     # Test with payer name
     payer = identify_payer(payer_name="MEDI CAL FISCAL INTERMEDIARY")
-    print(f"  payer_name='MEDI CAL FISCAL INTERMEDIARY' -> {payer}")
+    logger.info("  payer_name='MEDI CAL FISCAL INTERMEDIARY' -> %s", payer)
     assert payer == "MEDI_CAL", "Should identify Medi-Cal by name"
     
     # Test unknown payer
     payer = identify_payer(trn03="9999999999", payer_name="UNKNOWN PAYER")
-    print(f"  Unknown payer -> {payer}")
+    logger.info("  Unknown payer -> %s", payer)
     assert payer is None, "Should return None for unknown payer"
     
     # Test CARC normalization
-    print("\nTesting CARC code normalization:")
+    logger.info("\nTesting CARC code normalization:")
     test_codes = ["0012", "034", "015", "45", "A1", "999", ""]
     for code in test_codes:
         normalized = normalize_carc_code(code)
-        print(f"  '{code}' -> '{normalized}'")
+        logger.info("  '%s' -> '%s'", code, normalized)
     
     # Test should_normalize_carc
-    print("\nTesting should_normalize_carc:")
-    print(f"  MEDI_CAL: {should_normalize_carc('MEDI_CAL')}")
-    print(f"  None: {should_normalize_carc(None)}")
-    print(f"  Unknown: {should_normalize_carc('UNKNOWN')}")
+    logger.info("\nTesting should_normalize_carc:")
+    logger.info("  MEDI_CAL: %s", should_normalize_carc('MEDI_CAL'))
+    logger.info("  None: %s", should_normalize_carc(None))
+    logger.info("  Unknown: %s", should_normalize_carc('UNKNOWN'))
     
     # Print payer summary
-    print("\n")
+    logger.info("\n")
     print_payer_summary()
     
-    print("\nAll tests passed!")
+    logger.info("\nAll tests passed!")
 

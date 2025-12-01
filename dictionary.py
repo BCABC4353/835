@@ -431,6 +431,7 @@ def get_ambulance_code_description(code):
         'A0997': 'Ambulance response and treatment, no transport (alternative code)',
         'A9999': 'Miscellaneous DME supply or accessory, not otherwise classified',
         '66666': 'Payer-specific placeholder code (Prospect Medical)',
+        '99999': 'Payer-specific placeholder/administrative code',
         
         # ============================================================================
         # FOR REVIEW: Non-ambulance or payer-specific codes appearing in 835 remittances
@@ -558,7 +559,13 @@ def get_ambulance_modifier_description(modifier):
         'HU': 'Funded by Child Welfare Agency (Behavioral Health)',
         'ME': 'Multi-Employer Health Plan (Payer-Specific)',
         'NU': 'New Equipment (DME Modifier)',
-        '0H': 'Invalid/Unknown Modifier - Needs Research (Possibly Data Entry Error)'
+        '0H': 'Invalid/Unknown Modifier - Needs Research (Possibly Data Entry Error)',
+        
+        # ============================================================================
+        # Additional Modifiers (found in 835 remittances)
+        # ============================================================================
+        'GC': 'Resident Under Direction of Teaching Physician',
+        'CG': 'Policy Criteria Applied (Payer-Specific Coverage Determination)',
     }
     if len(modifier) == 2:
         first = modifier[0]

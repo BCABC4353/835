@@ -1,0 +1,47 @@
+# 835 EDI Parser - Git Ignore File
+
+# Configuration files (may contain sensitive paths)
+835_config.json
+.835config
+
+# Keep example config
+!835_config.example.json
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Logs
+*.log
+
+# Testing output
+*_TESTING/
+*.PROCESSED
+
+# Data files (don't commit user data)
+*.csv
+*.xlsx
+*.txt
+*.html
+
+# But keep example/template files
+!835_config.example.json
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Distribution
+dist/
+build/
+*.egg-info/

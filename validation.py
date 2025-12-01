@@ -9,15 +9,21 @@ This module provides comprehensive validation for 835 EDI to CSV conversion with
 - Detailed error reporting with payer/state tracking
 """
 
-from decimal import Decimal, ROUND_HALF_UP
-from collections import defaultdict, OrderedDict
+import decimal
+from decimal import Decimal, InvalidOperation
+from collections import defaultdict
 from datetime import datetime
-from typing import Dict, List, Tuple, Optional, Any
+from typing import Dict, List, Any
 import re
 import html
 import os
+import logging
 from categorization import categorize_adjustment
 import colloquial
+import dictionary
+
+# Configure module logger
+logger = logging.getLogger(__name__)
 
 
 class ValidationError:
@@ -186,6 +192,7 @@ class SegmentFieldMap:
         '1H': 'CLM_CHAMPUSIdentificationNumber_L2100_REF',
         '1K': 'CLM_PayersClaimNumber_L2100_REF',
         '1L': 'CLM_GroupNumber_L2100_REF',
+        '6P': 'CLM_GroupNumber_L2100_REF',  # Also maps to Group Number
         '1W': 'CLM_MemberID_L2100_NM1',
         '28': 'CLM_EmployeeIdentificationNumber_L2100_REF',
         '2U': 'CLM_PayerIdentificationNumber_L2100_REF',
@@ -235,8 +242,14 @@ class SegmentFieldMap:
         'F5': 'CLM_PatientAmountPaid_L2100_AMT',
         'I': 'CLM_InterestAmount_L2100_AMT',
         'NL': 'CLM_PromptPaymentDiscount',
-        'T': 'CLM_TaxAmount_L2100_AMT',
-        'T2': 'CLM_TotalClaimBeforeTaxes',
+        'T': [
+            'CLM_TaxAmount_L2100_AMT',
+            'SVC_TaxAmount_L2110_AMT'
+        ],
+        'T2': [
+            'CLM_TotalClaimBeforeTaxes',
+            'SVC_TotalServiceBeforeTaxes'
+        ],
         'ZK': 'CLM_FederalMedicareCreditAmount',
         'ZL': 'CLM_FederalMedicareBuyInAmount',
         'ZM': 'CLM_FederalMedicareBloodDeductible',
@@ -244,9 +257,7 @@ class SegmentFieldMap:
         'ZO': 'CLM_ZOAmount',
         'ZZ': 'CLM_MutuallyDefined',
         'B6': 'SVC_AllowedAmount_L2110_AMT',
-        'KH': 'SVC_DeductibleAmount',
-        'T': 'SVC_TaxAmount_L2110_AMT',
-        'T2': 'SVC_TotalServiceBeforeTaxes'
+        'KH': 'SVC_DeductibleAmount'
     }
     QTY_QUALIFIER_MAP = {
         'PS': 'CLM_PrescriptionCount',
@@ -666,19 +677,20 @@ class EDIFieldTracker:
 
 class ZeroFailValidator:
     """Zero-tolerance validation for 835 to CSV conversion"""
-    def __init__(self, debug: bool = False):
+    def __init__(self, debug: bool = False, payer_keys: Dict = None):
         self.errors = []
         self.warnings = []
         self.debug = debug
+        self.payer_keys = payer_keys or {}  # Maps file index to payer key for overrides
         self.field_tracker = EDIFieldTracker()
         self.segment_maps = SegmentFieldMap.get_all_segments()
         self.qualifier_maps = SegmentFieldMap.get_qualifier_maps()
         self.debug_counts = defaultdict(lambda: defaultdict(int))
         self.debug_limit = 3
         if self.debug:
-            print("[DEBUG] ZeroFailValidator initialized with debug mode ENABLED")
-            print("[DEBUG] Debug output limited to failed validations only")
-            print("[DEBUG] Maximum 3 debug outputs per error type per payer\n")
+            logger.debug("ZeroFailValidator initialized with debug mode ENABLED")
+            logger.debug("Debug output limited to failed validations only")
+            logger.debug("Maximum 3 debug outputs per error type per payer")
         self.stats = {
             'total_segments': 0,
             'total_fields': 0,
@@ -686,8 +698,10 @@ class ZeroFailValidator:
             'calculations_checked': 0,
             'missing_mappings': defaultdict(list),
             'payers_missing_mileage_units': defaultdict(int),
-            'payer_data_quality_issues': defaultdict(lambda: defaultdict(int))
+            'payer_data_quality_issues': defaultdict(lambda: defaultdict(int)),
+            'priority_rarc_codes': defaultdict(lambda: defaultdict(int))  # Track payer-specific priority RARC codes
         }
+        self.current_file_idx = 0  # Track current file for payer key lookup
     def _should_debug(self, payer_name: str, error_type: str) -> bool:
         """Check if debug output should be shown for this payer/error combination"""
         if not self.debug:
@@ -696,6 +710,58 @@ class ZeroFailValidator:
             return False
         self.debug_counts[payer_name][error_type] += 1
         return True
+    
+    def _get_payer_key_for_file(self, file_idx: int) -> str:
+        """Get the payer key for a given file index."""
+        return self.payer_keys.get(file_idx)
+    
+    def _allows_generic_payer_id(self, file_idx: int) -> bool:
+        """Check if the payer for this file allows generic payer IDs (e.g., 999999)."""
+        payer_key = self._get_payer_key_for_file(file_idx)
+        if payer_key:
+            return colloquial.allows_generic_payer_id(payer_key)
+        return False
+    
+    def _is_priority_rarc(self, file_idx: int, rarc_code: str) -> bool:
+        """Check if a RARC code is a priority code for this file's payer."""
+        payer_key = self._get_payer_key_for_file(file_idx)
+        if payer_key:
+            return colloquial.is_payer_priority_rarc(payer_key, rarc_code)
+        return False
+    
+    def _parse_currency(self, value) -> float:
+        """Parse a currency string (e.g., '-$1,712.00') to float."""
+        if value is None or value == '':
+            return 0.0
+        if isinstance(value, (int, float)):
+            return float(value)
+        # Remove currency formatting: $, commas, and handle negatives
+        s = str(value).strip()
+        s = s.replace('$', '').replace(',', '')
+        if not s:
+            return 0.0
+        try:
+            return float(s)
+        except ValueError:
+            return 0.0
+    
+    def _parse_currency_decimal(self, value) -> Decimal:
+        """Parse a currency string (e.g., '-$1,712.00') to Decimal for precision."""
+        if value is None or value == '':
+            return Decimal('0')
+        if isinstance(value, Decimal):
+            return value
+        if isinstance(value, (int, float)):
+            return Decimal(str(value))
+        # Remove currency formatting: $, commas, and handle negatives
+        s = str(value).strip()
+        s = s.replace('$', '').replace(',', '')
+        if not s:
+            return Decimal('0')
+        try:
+            return Decimal(s)
+        except (ValueError, InvalidOperation):
+            return Decimal('0')
     
     def _derive_mileage_units(self, proc_code: str, charge_amt: float) -> float:
         """
@@ -840,10 +906,7 @@ class ZeroFailValidator:
                 continue
             field_name = f'{prefix}_{category}_{suffix}'
             actual_value = target_row.get(field_name, '')
-            try:
-                actual_amt = Decimal(str(actual_value)) if actual_value else Decimal('0')
-            except:
-                actual_amt = Decimal('0')
+            actual_amt = self._parse_currency_decimal(actual_value) if actual_value else Decimal('0')
             if abs(expected_amt - actual_amt) > Decimal('0.01'):
                 self.errors.append(ValidationError(
                     'CAS_CATEGORY',
@@ -868,7 +931,7 @@ class ZeroFailValidator:
         """
         def update_status(msg):
             if verbose:
-                print(msg)
+                logger.info(msg)
             if status_callback:
                 status_callback(msg)
         self.errors = []
@@ -880,7 +943,8 @@ class ZeroFailValidator:
             'calculations_checked': 0,
             'missing_mappings': defaultdict(list),
             'payers_missing_mileage_units': defaultdict(int),
-            'payer_data_quality_issues': defaultdict(lambda: defaultdict(int))
+            'payer_data_quality_issues': defaultdict(lambda: defaultdict(int)),
+            'priority_rarc_codes': defaultdict(lambda: defaultdict(int))
         }
         update_status("  [1/10] Parsing EDI structure...")
         edi_data = self._parse_edi_data(edi_segments, delimiter)
@@ -920,7 +984,7 @@ class ZeroFailValidator:
         """
         def update_status(msg):
             if verbose:
-                print(msg)
+                logger.info(msg)
             if status_callback:
                 status_callback(msg)
         
@@ -936,29 +1000,44 @@ class ZeroFailValidator:
             'calculations_checked': 0,
             'missing_mappings': defaultdict(list),
             'payers_missing_mileage_units': defaultdict(int),
-            'payer_data_quality_issues': defaultdict(lambda: defaultdict(int))
+            'payer_data_quality_issues': defaultdict(lambda: defaultdict(int)),
+            'priority_rarc_codes': defaultdict(lambda: defaultdict(int))
         }
         
         update_status("  [1/10] Parsing EDI structure (per-file)...")
         edi_data = self._parse_edi_data_by_file(edi_segments_by_file)
         
-        # Combine segments for methods that need flat list
+        # Combine segments for reporting, but validate per-file to handle different delimiters
         all_segments = []
         default_delimiter = '*'
-        for file_data in edi_segments_by_file:
+        for idx, file_data in enumerate(edi_segments_by_file):
             all_segments.extend(file_data['segments'])
-            default_delimiter = file_data.get('delimiter', '*')
+            if idx == 0:
+                default_delimiter = file_data.get('delimiter', '*')
         
         update_status("  [2/10] Validating loop structure...")
         self._validate_loop_structure(edi_data)
         update_status("  [3/10] Validating segment sequences...")
-        self._validate_critical_sequences(all_segments, default_delimiter)
+        # Validate each file separately with its own delimiter
+        for file_data in edi_segments_by_file:
+            file_segments = file_data['segments']
+            file_delimiter = file_data.get('delimiter', '*')
+            self._validate_critical_sequences(file_segments, file_delimiter)
         update_status("  [4/10] Grouping claims...")
         csv_by_claim = self._group_csv_by_claim(csv_rows)
         update_status("  [5/10] Validating calculations & balancing...")
-        self._validate_calculations(csv_rows, csv_by_claim, all_segments, default_delimiter, edi_data, verbose=verbose)
+        # Pass edi_segments_by_file for per-file delimiter handling
+        self._validate_calculations(
+            csv_rows,
+            csv_by_claim,
+            all_segments,
+            default_delimiter,
+            edi_data,
+            verbose=verbose,
+            edi_segments_by_file=edi_segments_by_file
+        )
         update_status("  [6/10] Validating field completeness...")
-        self._validate_completeness(edi_data, csv_rows, default_delimiter, verbose=verbose)
+        self._validate_completeness(edi_data, csv_rows, edi_segments_by_file, verbose=verbose)
         update_status("  [7/10] Validating composite fields (per-file)...")
         self._validate_composite_fields_by_file(edi_data, csv_rows)
         update_status("  [8/10] Validating field mappings & descriptions...")
@@ -993,7 +1072,6 @@ class ZeroFailValidator:
             segments = file_data['segments']
             delimiter = file_data.get('delimiter', '*')
             
-            current_claim = None
             current_claim_key = None  # claim_id|occurrence key
             current_service = None
             current_loop_level = 'header'
@@ -1027,7 +1105,6 @@ class ZeroFailValidator:
                     occurrence = claim_occurrence_tracker[base_claim_id]
                     
                     # Use claim_id|occurrence as the key to handle duplicates
-                    current_claim = base_claim_id
                     current_claim_key = f"{base_claim_id}|{occurrence}"
                     current_service = None
                     
@@ -1264,30 +1341,36 @@ class ZeroFailValidator:
                             edi_data['header'][seg_id] = elements
         return edi_data
     def _group_csv_by_claim(self, csv_rows: List[dict]) -> Dict[str, List[dict]]:
-        """Group CSV rows by (file, claim_id) composite key to handle duplicate claim IDs across files"""
+        """Group CSV rows by (file, claim_id, occurrence) composite key to handle:
+        - Duplicate claim IDs across files (COB scenarios)
+        - Multiple occurrences of same claim (reversals, corrections)
+        """
         grouped = defaultdict(list)
         for row in csv_rows:
             claim_id = row.get('CLM_PatientControlNumber_L2100_CLP', 'UNKNOWN')
             file_name = row.get('Filename_File', '')
+            occurrence = row.get('CLM_Occurrence_L2100_CLP', '1')
+            occurrence = str(occurrence).strip() if occurrence else '1'
             if file_name:
                 # Normalize file path to basename for consistent matching
                 normalized_file = self._normalize_file_path(file_name)
-                composite_key = f"{normalized_file}|{claim_id}"
+                composite_key = f"{normalized_file}|{claim_id}|{occurrence}"
             else:
-                composite_key = claim_id
+                composite_key = f"{claim_id}|{occurrence}"
             grouped[composite_key].append(row)
         return grouped
     def _normalize_file_path(self, file_path: str) -> str:
         """Normalize file path to just basename for consistent matching.
         
         This handles cases where CSV has paths with '_testing' folder but
-        EDI files are read from original location.
+        EDI files are read from original location. Also normalizes case
+        since Windows is case-insensitive but Python string comparison is not.
         """
         if not file_path:
             return ''
-        # Extract just the filename (basename) for consistent matching
+        # Extract just the filename (basename) and normalize to uppercase for consistent matching
         import os
-        return os.path.basename(file_path)
+        return os.path.basename(file_path).upper()
     
     def _extract_claim_id_from_composite(self, composite_key: str) -> tuple:
         """Extract file name and claim ID from composite key"""
@@ -1297,21 +1380,32 @@ class ZeroFailValidator:
         else:
             return '', composite_key
     def _validate_calculations(self, csv_rows: List[dict], csv_by_claim: Dict[str, List[dict]],
-                              edi_segments: List[str], delimiter: str, edi_data: Dict, verbose: bool = False):
+                              edi_segments: List[str], delimiter: str, edi_data: Dict,
+                              verbose: bool = False, edi_segments_by_file: List[dict] = None):
         """Layer 1: Validate all calculations"""
 
-        current_file_segments = []
         file_segment_groups = []
 
-        for segment in edi_segments:
-            seg_id = segment.split(delimiter)[0] if delimiter in segment else segment.split('*')[0]
-            current_file_segments.append(segment)
+        if edi_segments_by_file:
+            for file_data in edi_segments_by_file:
+                segments = file_data.get('segments', [])
+                file_delimiter = file_data.get('delimiter', '*')
+                file_name = self._normalize_file_path(file_data.get('file', ''))
+                file_segment_groups.append((segments, file_delimiter, file_name))
+        else:
+            current_file_segments = []
+            for segment in edi_segments:
+                seg_id = segment.split(delimiter)[0] if delimiter in segment else segment.split('*')[0]
+                current_file_segments.append(segment)
 
-            if seg_id == 'IEA':
-                file_segment_groups.append(current_file_segments[:])
-                current_file_segments = []
+                if seg_id == 'IEA':
+                    file_segment_groups.append((current_file_segments[:], delimiter, ''))
+                    current_file_segments = []
+            if not file_segment_groups:
+                file_segment_groups.append((edi_segments, delimiter, ''))
 
-        for file_segments in file_segment_groups:
+        for file_segments, file_delimiter, file_name in file_segment_groups:
+            delimiter = file_delimiter  # Use this file's delimiter
             check_total = None
             clp_payments = []
             plb_total = Decimal('0')
@@ -1348,7 +1442,7 @@ class ZeroFailValidator:
                         else:
                             check_total += amount
                     except (ValueError, TypeError, decimal.InvalidOperation):
-                        pass
+                        logger.warning("Invalid BPR check amount in file %s: '%s'", file_name or 'unknown', elements[2])
                     saw_bpr_segment = True
                     if notification_only_check:
                         is_zero_non_payment = (
@@ -1364,7 +1458,8 @@ class ZeroFailValidator:
                         payment = Decimal(str(elements[4]))
                         clp_payments.append(payment)
                     except (ValueError, TypeError, decimal.InvalidOperation):
-                        pass
+                        claim_id = elements[1] if len(elements) > 1 else 'unknown'
+                        logger.warning("Invalid CLP payment amount for claim %s in file %s: '%s'", claim_id, file_name or 'unknown', elements[4])
 
                 elif seg_id == 'PLB' and len(elements) >= 3:
                     for i in range(3, min(len(elements), 15), 2):
@@ -1373,7 +1468,7 @@ class ZeroFailValidator:
                                 amount = Decimal(str(elements[i+1]))
                                 plb_total += amount
                             except (ValueError, TypeError):
-                                pass
+                                logger.warning("Invalid PLB adjustment amount at element %d in file %s: '%s'", i+1, file_name or 'unknown', elements[i+1])
 
             skip_transaction_balance = saw_bpr_segment and notification_only_check
             if skip_transaction_balance:
@@ -1384,13 +1479,8 @@ class ZeroFailValidator:
                 expected = sum(clp_payments) - plb_total
                 if abs(check_total - expected) > Decimal('0.01'):
                     if self._should_debug(payer_name, 'TransactionBalance'):
-                        print(f"\n[DEBUG] Transaction balance error")
-                        print(f"[DEBUG] Payer: {payer_name}")
-                        print(f"[DEBUG] BPR02 (Check Total): {check_total}")
-                        print(f"[DEBUG] Sum(CLP04) Claim Payments: {sum(clp_payments)}")
-                        print(f"[DEBUG] PLB Adjustments: {plb_total}")
-                        print(f"[DEBUG] Expected (CLP04 - PLB): {expected}")
-                        print(f"[DEBUG] Difference: {abs(check_total - expected)}")
+                        logger.debug("Transaction balance error - Payer: %s, BPR02: %s, Sum(CLP04): %s, PLB: %s, Expected: %s, Diff: %s",
+                                   payer_name, check_total, sum(clp_payments), plb_total, expected, abs(check_total - expected))
                     self.errors.append(ValidationError(
                         'CALC',
                         f"Check total doesn't balance per X12 835 Section 1.10.2.1.3",
@@ -1436,7 +1526,7 @@ class ZeroFailValidator:
         total_claims = len(csv_by_claim)
         for idx, (claim_id, rows) in enumerate(csv_by_claim.items(), 1):
             if verbose and idx % 100 == 0:
-                print(f"      Validating claim {idx:,} of {total_claims:,}...")
+                logger.info("      Validating claim %s of %s...", f"{idx:,}", f"{total_claims:,}")
             self._validate_claim_calculations(claim_id, rows)
 
             # Use composite key directly - both csv_by_claim and cas_by_claim now use same format
@@ -1465,10 +1555,10 @@ class ZeroFailValidator:
         payer_state = claim_row.get('Payer_State_L1000A_N4', 'Unknown State')
         payer_info = {'name': payer_name, 'state': payer_state}
         try:
-            claim_charge = Decimal(str(claim_row.get('CLM_ChargeAmount_L2100_CLP', 0)))
-            claim_payment = Decimal(str(claim_row.get('CLM_PaymentAmount_L2100_CLP', 0)))
+            claim_charge = self._parse_currency_decimal(claim_row.get('CLM_ChargeAmount_L2100_CLP', 0))
+            claim_payment = self._parse_currency_decimal(claim_row.get('CLM_PaymentAmount_L2100_CLP', 0))
             claim_status = claim_row.get('CLM_Status_L2100_CLP', '')
-        except:
+        except (ValueError, TypeError, InvalidOperation):
             return
         if claim_status == '25':
             if claim_payment != 0:
@@ -1476,10 +1566,8 @@ class ZeroFailValidator:
                 if file_name:
                     error_location += f" (File: {file_name})"
                 if self._should_debug(payer_name, 'Predetermination'):
-                    print(f"\n[DEBUG] Predetermination claim error for {display_claim_id}")
-                    print(f"[DEBUG] Payer: {payer_name}")
-                    print(f"[DEBUG] CLP02 (Status): {claim_status} (Predetermination)")
-                    print(f"[DEBUG] CLP04 Payment: {claim_payment} - Should be zero")
+                    logger.debug("Predetermination claim error - Claim: %s, Payer: %s, Status: %s, Payment: %s (should be zero)",
+                               display_claim_id, payer_name, claim_status, claim_payment)
                 self.errors.append(ValidationError(
                     'EDGE',
                     f"Predetermination claim (Status 25) should have zero payment per X12 spec section 1.10.2.7",
@@ -1495,11 +1583,8 @@ class ZeroFailValidator:
             cas_amount_field = f'CLM_CAS{cas_idx}_Amount_L2100_CAS'
             val = claim_row.get(cas_amount_field)
             if val:
-                try:
-                    amount = Decimal(str(val))
-                    claim_adj_total += amount
-                except (ValueError, TypeError, decimal.InvalidOperation):
-                    pass
+                amount = self._parse_currency_decimal(val)
+                claim_adj_total += amount
 
         service_rows = [r for r in rows if r.get('SVC_ChargeAmount_L2110_SVC')]
         for svc_row in service_rows:
@@ -1507,24 +1592,16 @@ class ZeroFailValidator:
                 cas_amount_field = f'SVC_CAS{cas_idx}_Amount_L2110_CAS'
                 val = svc_row.get(cas_amount_field)
                 if val:
-                    try:
-                        amount = Decimal(str(val))
-                        claim_adj_total += amount
-                    except (ValueError, TypeError, decimal.InvalidOperation):
-                        pass
+                    amount = self._parse_currency_decimal(val)
+                    claim_adj_total += amount
         expected = claim_charge - claim_adj_total
         if abs(claim_payment - expected) > Decimal('0.01'):
             error_location = f"Claim {display_claim_id}"
             if file_name:
                 error_location += f" (File: {file_name})"
             if self._should_debug(payer_name, 'ClaimBalance'):
-                print(f"\n[DEBUG] Claim balance error for {display_claim_id}")
-                print(f"[DEBUG] Payer: {payer_name}")
-                print(f"[DEBUG] CLP03 (Charge): {claim_charge}")
-                print(f"[DEBUG] CAS Adjustments Total: {claim_adj_total}")
-                print(f"[DEBUG] CLP04 (Payment): {claim_payment}")
-                print(f"[DEBUG] Expected (Charge - Adj): {expected}")
-                print(f"[DEBUG] Difference: {abs(claim_payment - expected)}")
+                logger.debug("Claim balance error - Claim: %s, Payer: %s, Charge: %s, Adj: %s, Payment: %s, Expected: %s, Diff: %s",
+                           display_claim_id, payer_name, claim_charge, claim_adj_total, claim_payment, expected, abs(claim_payment - expected))
             self.errors.append(ValidationError(
                 'CALC',
                 f"Claim doesn't balance: Charge({claim_charge}) - Adjustments({claim_adj_total}) should equal Payment({claim_payment})",
@@ -1539,11 +1616,8 @@ class ZeroFailValidator:
         service_payment_total = Decimal('0')
         for svc_row in service_rows:
             self._validate_service_calculations(display_claim_id, svc_row, file_name)
-            try:
-                service_charge_total += Decimal(str(svc_row.get('SVC_ChargeAmount_L2110_SVC', 0)))
-                service_payment_total += Decimal(str(svc_row.get('SVC_PaymentAmount_L2110_SVC', 0)))
-            except:
-                pass
+            service_charge_total += self._parse_currency_decimal(svc_row.get('SVC_ChargeAmount_L2110_SVC', 0))
+            service_payment_total += self._parse_currency_decimal(svc_row.get('SVC_PaymentAmount_L2110_SVC', 0))
         if len(service_rows) > 0:
             try:
                 if abs(claim_charge - service_charge_total) > Decimal('0.01'):
@@ -1584,21 +1658,14 @@ class ZeroFailValidator:
         Where CAS adjustments = sum of CAS03, 06, 09, 12, 15, and 18
         """
         payer_name = row.get('Payer_Name_L1000A_N1', 'Unknown')
-        try:
-            charge = Decimal(str(row.get('SVC_ChargeAmount_L2110_SVC', 0)))
-            payment = Decimal(str(row.get('SVC_PaymentAmount_L2110_SVC', 0)))
-        except:
-            return
+        charge = self._parse_currency_decimal(row.get('SVC_ChargeAmount_L2110_SVC', 0))
+        payment = self._parse_currency_decimal(row.get('SVC_PaymentAmount_L2110_SVC', 0))
         adj_total = Decimal('0')
         for cas_idx in range(1, 6):
             cas_amount_field = f'SVC_CAS{cas_idx}_Amount_L2110_CAS'
             val = row.get(cas_amount_field)
             if val:
-                try:
-                    amount = Decimal(str(val))
-                    adj_total += amount
-                except (ValueError, TypeError, decimal.InvalidOperation):
-                    pass
+                adj_total += self._parse_currency_decimal(val)
         expected = charge - adj_total
         if abs(payment - expected) > Decimal('0.01'):
             proc = row.get('SVC_ProcedureCode_L2110_SVC', '')
@@ -1606,12 +1673,8 @@ class ZeroFailValidator:
             if file_name:
                 error_location += f" (File: {file_name})"
             if self._should_debug(payer_name, 'ServiceBalance'):
-                print(f"\n[DEBUG] Service balance error for {proc} in claim {claim_id}")
-                print(f"[DEBUG] Payer: {payer_name}")
-                print(f"[DEBUG] SVC02 (Charge): {charge}")
-                print(f"[DEBUG] CAS Adjustments Total: {adj_total}")
-                print(f"[DEBUG] SVC03 (Payment): {payment}")
-                print(f"[DEBUG] Expected (Charge - Adj): {expected}")
+                logger.debug("Service balance error - Proc: %s, Claim: %s, Payer: %s, Charge: %s, Adj: %s, Payment: %s, Expected: %s",
+                           proc, claim_id, payer_name, charge, adj_total, payment, expected)
             self.errors.append(ValidationError(
                 'CALC',
                 f"Service doesn't balance: Charge({charge}) - Adjustments({adj_total}) should equal Payment({payment})",
@@ -1621,30 +1684,39 @@ class ZeroFailValidator:
                 field='SVC_PaymentAmount_L2110_SVC'
             ))
         self.stats['calculations_checked'] += 1
-    def _validate_completeness(self, edi_data: Dict, csv_rows: List[dict], delimiter: str, verbose: bool = False):
+    def _validate_completeness(self, edi_data: Dict, csv_rows: List[dict],
+                              delimiter_or_files, verbose: bool = False):
         """Layer 2: Validate 100% field coverage"""
+        
+        # Use first file's delimiter as default for legacy compatibility
+        delimiter = '*'
+        if isinstance(delimiter_or_files, list):
+            if delimiter_or_files:
+                delimiter = delimiter_or_files[0].get('delimiter', '*')
+        else:
+            delimiter = delimiter_or_files or '*'
 
         if verbose:
-            print("      Detecting duplicate claim numbers...")
+            logger.info("      Detecting duplicate claim numbers...")
         from collections import Counter
         claim_numbers = [row.get('CLM_PatientControlNumber_L2100_CLP') for row in csv_rows if row.get('CLM_PatientControlNumber_L2100_CLP')]
         claim_counts = Counter(claim_numbers)
         duplicate_claim_numbers = set([cn for cn, count in claim_counts.items() if count > 1])
         if verbose:
-            print(f"      Building expected fields from {len(edi_data.get('claims', {}))} claims...")
+            logger.info("      Building expected fields from %d claims...", len(edi_data.get('claims', {})))
         expected_fields = self._build_expected_fields(edi_data, delimiter)
 
         if verbose:
-            print(f"      Extracting actual fields from {len(csv_rows):,} CSV rows...")
+            logger.info("      Extracting actual fields from %s CSV rows...", f"{len(csv_rows):,}")
         actual_fields = self._extract_actual_fields(csv_rows, verbose=verbose)
         if verbose:
-            print(f"      Comparing {len(expected_fields):,} expected fields...")
+            logger.info("      Comparing %s expected fields...", f"{len(expected_fields):,}")
 
         missing_count = 0
         total_fields = len(expected_fields)
         for idx, (field_key, expected_value) in enumerate(expected_fields.items(), 1):
             if verbose and idx % 1000 == 0:
-                print(f"      Validating field {idx:,} of {total_fields:,}...")
+                logger.info("      Validating field %s of %s...", f"{idx:,}", f"{total_fields:,}")
             if '_CAS_Present_' in field_key:
                 continue
 
@@ -1691,7 +1763,12 @@ class ZeroFailValidator:
 
             self.stats['fields_validated'] += 1
     def _build_expected_fields(self, edi_data: Dict, delimiter: str) -> Dict:
-        """Build complete list of expected fields from EDI"""
+        """Build complete list of expected fields from EDI
+        
+        Uses file|claim_id composite keys to handle claims that appear in multiple
+        EDI files (e.g., coordination of benefits scenarios where the same claim
+        is processed by both primary and secondary payers).
+        """
         expected = {}
         for seg_id, elements in edi_data['header'].items():
             self._add_expected_segment_fields(expected, seg_id, elements, 'Header')
@@ -1700,9 +1777,16 @@ class ZeroFailValidator:
         for seg_id, elements in edi_data['payee_loop'].items():
             self._add_expected_segment_fields(expected, seg_id, elements, 'Payee Loop')
         for claim_id, claim_data in edi_data['claims'].items():
-            # Extract just the claim ID from composite key (file|claim_id) for location string
-            _, actual_claim_id = self._extract_claim_id_from_composite(claim_id)
-            display_claim_id = actual_claim_id if actual_claim_id else claim_id
+            # Extract file and claim ID from composite key (file|claim_id)
+            # Keep the file in the location to distinguish same claim across different files
+            file_part, actual_claim_id = self._extract_claim_id_from_composite(claim_id)
+            normalized_file = self._normalize_file_path(file_part) if file_part else ''
+            
+            # Use file|claim_id as display to match CSV extraction
+            if normalized_file:
+                display_claim_id = f"{normalized_file}|{actual_claim_id}"
+            else:
+                display_claim_id = actual_claim_id if actual_claim_id else claim_id
             
             for seg_id, elements in claim_data.get('segments', {}).items():
                 if seg_id not in ['ISA', 'GS', 'ST', 'SE', 'GE', 'IEA', 'BPR', 'TRN', 'N1', 'N2', 'N3', 'N4', 'PER', 'REF', 'CUR', 'RDM', 'DTM', 'PLB', 'LX', 'TS3', 'TS2']:
@@ -1858,7 +1942,13 @@ class ZeroFailValidator:
                     'location': location
                 }
     def _extract_actual_fields(self, csv_rows: List[dict], verbose: bool = False) -> Dict:
-        """Extract all actual field values from CSV"""
+        """Extract all actual field values from CSV
+        
+        Uses file|claim_id|occurrence composite keys to handle claims that appear in multiple
+        EDI files (e.g., coordination of benefits scenarios where the same claim
+        is processed by both primary and secondary payers) and multiple occurrences
+        (e.g., reversals and corrections of the same claim).
+        """
         actual = {}
 
         service_counts = defaultdict(int)
@@ -1866,16 +1956,26 @@ class ZeroFailValidator:
 
         for idx, row in enumerate(csv_rows, 1):
             if verbose and idx % 10000 == 0:
-                print(f"        Processing CSV row {idx:,} of {total_rows:,}...")
+                logger.info("        Processing CSV row %s of %s...", f"{idx:,}", f"{total_rows:,}")
             raw_claim_id = row.get('CLM_PatientControlNumber_L2100_CLP', '')
             claim_id = str(raw_claim_id).strip() if raw_claim_id is not None else ''
             if not claim_id:
                 continue
-            occurrence_val = row.get('CLM_Occurrence_L2100_CLP')
-            if occurrence_val in (None, ''):
-                occurrence_val = row.get('CLAIM OCCURRENCE')
-            occurrence = str(occurrence_val).strip() if occurrence_val not in (None, '') else ''
-            claim_key = f"{claim_id}|{occurrence}" if occurrence else claim_id
+            
+            # Get source file and normalize to basename for consistent matching with EDI
+            file_name = row.get('Filename_File', '')
+            normalized_file = self._normalize_file_path(file_name) if file_name else ''
+            
+            # Get occurrence to match EDI parsing (same claim can appear multiple times)
+            occurrence = row.get('CLM_Occurrence_L2100_CLP', '1')
+            occurrence = str(occurrence).strip() if occurrence else '1'
+            
+            # Build claim key with file|claim_id|occurrence to match _build_expected_fields
+            # EDI parser uses: file|claim_id|occurrence
+            if normalized_file:
+                claim_key = f"{normalized_file}|{claim_id}|{occurrence}"
+            else:
+                claim_key = f"{claim_id}|{occurrence}"
 
             has_service = bool(row.get('SVC_ProcedureCode_L2110_SVC'))
 
@@ -1925,21 +2025,43 @@ class ZeroFailValidator:
         expected_str = str(expected).strip() if expected is not None else ''
         if actual_str == expected_str:
             return True
+        # Try whitespace-normalized comparison (multiple spaces -> single space)
+        import re
+        actual_normalized = re.sub(r'\s+', ' ', actual_str)
+        expected_normalized = re.sub(r'\s+', ' ', expected_str)
+        if actual_normalized == expected_normalized:
+            return True
+        # Try numeric comparison (handles currency formatting: $, commas)
         try:
-            actual_clean = actual_str.replace(',', '')
-            expected_clean = expected_str.replace(',', '')
+            actual_clean = actual_str.replace('$', '').replace(',', '')
+            expected_clean = expected_str.replace('$', '').replace(',', '')
             actual_num = Decimal(actual_clean)
             expected_num = Decimal(expected_clean)
             return abs(actual_num - expected_num) <= Decimal('0.01')
-        except:
+        except (ValueError, InvalidOperation):
             pass
-        if len(actual_str) == 8 and len(expected_str) == 8:
-            try:
-                datetime.strptime(actual_str, '%Y%m%d')
-                datetime.strptime(expected_str, '%Y%m%d')
-                return actual_str == expected_str
-            except:
-                pass
+        # Try date comparison (handles YYYYMMDD, YYMMDD, MM/DD/YY formats)
+        try:
+            actual_date = None
+            expected_date = None
+            # Parse actual (may be MM/DD/YY, YYYYMMDD, or YYMMDD)
+            if '/' in actual_str:
+                actual_date = datetime.strptime(actual_str, '%m/%d/%y')
+            elif len(actual_str) == 8 and actual_str.isdigit():
+                actual_date = datetime.strptime(actual_str, '%Y%m%d')
+            elif len(actual_str) == 6 and actual_str.isdigit():
+                actual_date = datetime.strptime(actual_str, '%y%m%d')
+            # Parse expected (may be YYYYMMDD or YYMMDD from EDI)
+            if '/' in expected_str:
+                expected_date = datetime.strptime(expected_str, '%m/%d/%y')
+            elif len(expected_str) == 8 and expected_str.isdigit():
+                expected_date = datetime.strptime(expected_str, '%Y%m%d')
+            elif len(expected_str) == 6 and expected_str.isdigit():
+                expected_date = datetime.strptime(expected_str, '%y%m%d')
+            if actual_date and expected_date:
+                return actual_date == expected_date
+        except ValueError:
+            pass
         if actual_str.lower() == expected_str.lower():
             return True
         return False
@@ -1947,10 +2069,10 @@ class ZeroFailValidator:
         """Layer 3: Validate field mappings and data quality"""
         self._track_dictionary_gaps(csv_rows, verbose=verbose)
         if verbose:
-            print(f"      Validating data types for {len(csv_rows):,} rows...")
+            logger.info("      Validating data types for %s rows...", f"{len(csv_rows):,}")
         for idx, row in enumerate(csv_rows, 1):
             if verbose and idx % 10000 == 0:
-                print(f"        Validating data types for row {idx:,} of {len(csv_rows):,}...")
+                logger.info("        Validating data types for row %s of %s...", f"{idx:,}", f"{len(csv_rows):,}")
             self._validate_field_data_types(row)
     def _track_dictionary_gaps(self, csv_rows: List[dict], verbose: bool = False):
         """Identify all codes that have missing dictionary entries - OPTIMIZED"""
@@ -2006,7 +2128,7 @@ class ZeroFailValidator:
         ]
         checked_codes = {}
         if verbose:
-            print(f"      Checking header-level codes (once)...")
+            logger.info("      Checking header-level codes (once)...")
         first_row = csv_rows[0]
         payer_info = {
             'name': first_row.get('Payer_Name_L1000A_N1', 'Unknown'),
@@ -2027,7 +2149,7 @@ class ZeroFailValidator:
                 })
                 self.stats['payer_data_quality_issues'][payer_key][f'Missing dictionary: {code_field}'] += 1
         if verbose:
-            print(f"      Collecting unique codes from {total_rows:,} rows...")
+            logger.info("      Collecting unique codes from %s rows...", f"{total_rows:,}")
         code_payer_counts = defaultdict(lambda: defaultdict(lambda: defaultdict(int)))
         for idx, row in enumerate(csv_rows, 1):
             payer_key = f"{row.get('Payer_Name_L1000A_N1', 'Unknown')}|{row.get('Payer_State_L1000A_N4', 'Unknown')}"
@@ -2062,7 +2184,7 @@ class ZeroFailValidator:
                     code_payer_counts['RARC'][code.strip()][payer_key] += 1
         if verbose:
             total_unique = sum(len(codes) for codes in code_payer_counts.values())
-            print(f"      Validating {total_unique:,} unique codes...")
+            logger.info("      Validating %s unique codes...", f"{total_unique:,}")
         carc_classifications = dictionary.get_carc_classifications()
         for code_field, codes_dict in code_payer_counts.items():
             for code, payer_counts in codes_dict.items():
@@ -2083,6 +2205,13 @@ class ZeroFailValidator:
                     # RARC = Remittance Advice Remark Code (from LQ, MOA, MIA segments)
                     desc = dictionary.get_remark_code_description(code)
                     is_gap = desc.startswith('Unknown')
+                    # Track priority RARC codes - attribute only to payers that list it as priority
+                    # Each payer's count is attributed only if that payer has it as a priority RARC
+                    for payer_key, count in payer_counts.items():
+                        for file_idx, pk in self.payer_keys.items():
+                            if pk == payer_key and self._is_priority_rarc(file_idx, code):
+                                self.stats['priority_rarc_codes'][payer_key][code] += count
+                                break  # Found matching payer for this payer_key
                 if is_gap:
                     total_count = sum(payer_counts.values())
                     for payer_key, count in payer_counts.items():
@@ -2113,13 +2242,17 @@ class ZeroFailValidator:
                         and not field.endswith('MethodDesc')
                         and not field == 'CHK_PaymentMethod_Header_BPR'
                         and not 'RemarkCode' in field
-                        and not 'RemarkDesc' in field]
+                        and not 'RemarkDesc' in field
+                        and not 'Date' in field]  # Exclude date fields (e.g., PaymentDate)
         for field in amount_fields:
             value = row.get(field)
             if value and value != '':
                 try:
-                    Decimal(str(value))
-                except:
+                    # Strip currency formatting ($, commas) before parsing
+                    clean_value = str(value).replace('$', '').replace(',', '').strip()
+                    if clean_value:
+                        Decimal(clean_value)
+                except (ValueError, InvalidOperation):
                     self.errors.append(ValidationError(
                         'MAPPING',
                         f"Non-numeric value in amount field",
@@ -2131,18 +2264,30 @@ class ZeroFailValidator:
         for field in date_fields:
             value = row.get(field)
             if value and value != '':
-                if len(str(value)) == 8:
+                str_value = str(value)
+                # Accept multiple date formats: YYYYMMDD (raw), MM/DD/YY (formatted)
+                is_valid = False
+                if len(str_value) == 8 and str_value.isdigit():
                     try:
-                        datetime.strptime(str(value), '%Y%m%d')
-                    except:
-                        self.errors.append(ValidationError(
-                            'MAPPING',
-                            f"Invalid date format",
-                            field=field,
-                            actual=value,
-                            expected='CCYYMMDD',
-                            location=row.get('CLM_PatientControlNumber_L2100_CLP')
-                        ))
+                        datetime.strptime(str_value, '%Y%m%d')
+                        is_valid = True
+                    except ValueError:
+                        pass
+                elif '/' in str_value:
+                    try:
+                        datetime.strptime(str_value, '%m/%d/%y')
+                        is_valid = True
+                    except ValueError:
+                        pass
+                if not is_valid and str_value:
+                    self.errors.append(ValidationError(
+                        'MAPPING',
+                        f"Invalid date format",
+                        field=field,
+                        actual=value,
+                        expected='CCYYMMDD or MM/DD/YY',
+                        location=row.get('CLM_PatientControlNumber_L2100_CLP')
+                    ))
     def _validate_date_formats(self, csv_rows: List[dict], verbose: bool = False):
         """Validate date formats in all date columns and report format coverage.
         
@@ -2195,7 +2340,7 @@ class ZeroFailValidator:
                 date_columns.add(field)
         
         if verbose:
-            print(f"      Found {len(date_columns)} date columns to validate")
+            logger.info("      Found %d date columns to validate", len(date_columns))
         
         # Track statistics
         format_counts = defaultdict(lambda: defaultdict(int))  # column -> format -> count
@@ -2205,7 +2350,7 @@ class ZeroFailValidator:
         
         for idx, row in enumerate(csv_rows, 1):
             if verbose and idx % 10000 == 0:
-                print(f"        Checking date formats: row {idx:,} of {len(csv_rows):,}...")
+                logger.info("        Checking date formats: row %s of %s...", f"{idx:,}", f"{len(csv_rows):,}")
             
             claim_id = row.get('CLM_PatientControlNumber_L2100_CLP', f'Row_{idx}')
             payer_name = row.get('Payer_Name_L1000A_N1', 'Unknown')
@@ -2270,24 +2415,24 @@ class ZeroFailValidator:
                 ))
         
         if verbose:
-            print(f"      Date format validation complete:")
-            print(f"        - Total dates checked: {total_dates_checked:,}")
-            print(f"        - Valid dates: {total_valid_dates:,}")
-            print(f"        - Unrecognized: {sum(len(v) for v in unrecognized_dates.values()):,}")
+            logger.info("      Date format validation complete:")
+            logger.info("        - Total dates checked: %s", f"{total_dates_checked:,}")
+            logger.info("        - Valid dates: %s", f"{total_valid_dates:,}")
+            logger.info("        - Unrecognized: %s", f"{sum(len(v) for v in unrecognized_dates.values()):,}")
             if format_counts:
-                print(f"        - Formats found:")
+                logger.info("        - Formats found:")
                 all_formats = set()
                 for formats in format_counts.values():
                     all_formats.update(formats.keys())
                 for fmt in sorted(all_formats):
                     total = sum(formats.get(fmt, 0) for formats in format_counts.values())
-                    print(f"          {fmt}: {total:,}")
+                    logger.info("          %s: %s", fmt, f"{total:,}")
 
     def _validate_description_fields(self, csv_rows: List[dict], verbose: bool = False):
         """Validate that description fields are populated when code fields have values"""
         total_rows = len(csv_rows)
         if verbose:
-            print(f"      Validating description fields for {total_rows:,} rows...")
+            logger.info("      Validating description fields for %s rows...", f"{total_rows:,}")
         code_desc_pairs = [
             ('CHK_PaymentMethod_Header_BPR', 'CHK_PaymentMethodDesc_Header_BPR'),
             ('CHK_Format_Header_BPR', 'CHK_FormatDesc_Header_BPR'),
@@ -2308,7 +2453,7 @@ class ZeroFailValidator:
         ]
         for idx, row in enumerate(csv_rows, 1):
             if verbose and idx % 10000 == 0:
-                print(f"        Validating descriptions for row {idx:,} of {total_rows:,}...")
+                logger.info("        Validating descriptions for row %s of %s...", f"{idx:,}", f"{total_rows:,}")
             for code_field, desc_field in code_desc_pairs:
                 code_value = row.get(code_field, '')
                 desc_value = row.get(desc_field, '')
@@ -2414,7 +2559,7 @@ class ZeroFailValidator:
         total_claims = len(csv_by_claim)
         for idx, (claim_id, rows) in enumerate(csv_by_claim.items(), 1):
             if verbose and idx % 500 == 0:
-                print(f"      Checking edge cases for claim {idx:,} of {total_claims:,}...")
+                logger.info("      Checking edge cases for claim %s of %s...", f"{idx:,}", f"{total_claims:,}")
             file_name, actual_claim_id = self._extract_claim_id_from_composite(claim_id)
             display_claim_id = actual_claim_id if file_name else claim_id
             claim_row = next((r for r in rows if r.get('CLM_Status_L2100_CLP')), None)
@@ -2425,16 +2570,14 @@ class ZeroFailValidator:
             claim_payer_info = {'name': claim_payer_name, 'state': claim_payer_state}
             status = claim_row.get('CLM_Status_L2100_CLP')
             if status == '22':
-                charge = float(claim_row.get('CLM_ChargeAmount_L2100_CLP', 0) or 0)
-                payment = float(claim_row.get('CLM_PaymentAmount_L2100_CLP', 0) or 0)
+                charge = self._parse_currency(claim_row.get('CLM_ChargeAmount_L2100_CLP', 0))
+                payment = self._parse_currency(claim_row.get('CLM_PaymentAmount_L2100_CLP', 0))
                 # Per X12 835 spec section 1.10.2.8, reversal claims should have negative values
                 # However, $0 payment is valid when reversing a denied claim (no payment to reverse)
                 if charge > 0:  # Positive charge is always wrong for reversal
                     if self._should_debug(claim_payer_name, 'ReversalCharge'):
-                        print(f"\n[DEBUG] Reversal claim error for {display_claim_id}")
-                        print(f"[DEBUG] Payer: {claim_payer_name}")
-                        print(f"[DEBUG] CLP02 (Status): 22 (Reversal)")
-                        print(f"[DEBUG] CLP03 (Charge): {charge} - Should be negative or zero")
+                        logger.debug("Reversal claim charge error - Claim: %s, Payer: %s, Charge: %s (should be negative or zero)",
+                                   display_claim_id, claim_payer_name, charge)
                     self.errors.append(ValidationError(
                         'EDGE',
                         "Reversal claim (Status 22) has positive charge - should be negative per X12 spec section 1.10.2.8",
@@ -2445,10 +2588,8 @@ class ZeroFailValidator:
                     ))
                 if payment > 0:  # Positive payment is always wrong for reversal; $0 is valid for denied claim reversals
                     if self._should_debug(claim_payer_name, 'ReversalPayment'):
-                        print(f"\n[DEBUG] Reversal claim error for {display_claim_id}")
-                        print(f"[DEBUG] Payer: {claim_payer_name}")
-                        print(f"[DEBUG] CLP02 (Status): 22 (Reversal)")
-                        print(f"[DEBUG] CLP04 (Payment): {payment} - Should be negative or zero")
+                        logger.debug("Reversal claim payment error - Claim: %s, Payer: %s, Payment: %s (should be negative or zero)",
+                                   display_claim_id, claim_payer_name, payment)
                     self.errors.append(ValidationError(
                         'EDGE',
                         "Reversal claim (Status 22) has positive payment - should be negative per X12 spec section 1.10.2.8",
@@ -2480,22 +2621,13 @@ class ZeroFailValidator:
                         continue
                     paid_units = svc_row.get('SVC_Units_L2110_SVC', '').strip()
                     original_units = svc_row.get('SVC_OriginalUnits_L2110_SVC', '').strip()
-                    payment_amt_str = svc_row.get('SVC_PaymentAmount_L2110_SVC', '0')
-                    charge_amt_str = svc_row.get('SVC_ChargeAmount_L2110_SVC', '0')
                     payer_name = svc_row.get('Payer_Name_L1000A_N1', 'Unknown')
                     payer_state = svc_row.get('Payer_State_L1000A_N4', '')
                     payer_key = f"{payer_name}|{payer_state}" if payer_state else payer_name
                     
-                    # Parse payment amount to determine if denied
-                    try:
-                        payment_amt = float(payment_amt_str) if payment_amt_str else 0
-                    except (ValueError, TypeError):
-                        payment_amt = 0
-                    
-                    try:
-                        charge_amt = float(charge_amt_str) if charge_amt_str else 0
-                    except (ValueError, TypeError):
-                        charge_amt = 0
+                    # Parse payment/charge amounts (handles currency formatting)
+                    payment_amt = self._parse_currency(svc_row.get('SVC_PaymentAmount_L2110_SVC', 0))
+                    charge_amt = self._parse_currency(svc_row.get('SVC_ChargeAmount_L2110_SVC', 0))
                     
                     # Apply X12 835 default rules for missing units:
                     # - SVC05 (paid_units): "If not present, the value is assumed to be one" (X12 TR3)
@@ -2506,42 +2638,19 @@ class ZeroFailValidator:
                     both_missing = not paid_units and not original_units
                     
                     if both_missing:
-                        if payer_name == 'PAYERNAME':
-                            continue
-                        
-                        # Denied claims (payment = $0): payers often omit units entirely
-                        # This is a payer data quality issue but not a parsing error
-                        if payment_amt == 0:
-                            # Denied claim - units missing is common payer behavior
-                            # Per X12, would default to 1, but for mileage we can derive from charge
-                            derived_units = self._derive_mileage_units(proc, charge_amt)
-                            if derived_units:
-                                # Log as info, not error - we can derive the units
-                                self.stats['payers_missing_mileage_units'][payer_key] += 1
-                                # Don't add to payer_data_quality_issues for denied claims
-                            # Skip warning for denied claims - this is expected payer behavior
-                            continue
-                        
-                        # Paid claim with missing units - this IS a data quality issue
-                        self.stats['payers_missing_mileage_units'][payer_key] += 1
-                        self.stats['payer_data_quality_issues'][payer_key]['Missing mileage units (paid claim)'] += 1
-                        
-                        if 'MEDICARE' in payer_name.upper():
-                            self.warnings.append(ValidationError(
-                                'EDGE',
-                                f"Medicare {proc} missing units - likely base/loaded mile (Payment: ${payment_amt:.2f}, Charge: ${charge_amt:.2f})",
-                                location=f"Claim ID: {display_claim_id} | Service: {proc}",
-                                actual=f"Payer: {payer_name}, State: {payer_state} | Trace to verify base rate billing",
-                                payer_info={'name': payer_name, 'state': payer_state}
-                            ))
-                        else:
-                            self.warnings.append(ValidationError(
-                                'EDGE',
-                                f"Paid mileage {proc} missing unit data (Payment: ${payment_amt:.2f}, Charge: ${charge_amt:.2f})",
-                                location=f"Claim ID: {display_claim_id} | Service: {proc}",
-                                actual=f"Payer: {payer_name}, State: {payer_state}",
-                                payer_info={'name': payer_name, 'state': payer_state}
-                            ))
+                        # Per X12 835 TR3 Section 2.3.2.3.2:
+                        # "SVC05 - If not present, the value is assumed to be one"
+                        # Missing units field = 1 unit per spec, NOT a data quality issue
+                        # This is compliant behavior, not an error or warning
+                        #
+                        # Common valid scenarios where units are omitted:
+                        # 1. Base/loaded mile billing (1 unit = base rate)
+                        # 2. Flat rate mileage contracts
+                        # 3. Single-unit services
+                        #
+                        # Only flag if charge amount is grossly inconsistent with 1 unit
+                        # (e.g., $240 charge at ~$8/mile suggests ~30 miles, not 1)
+                        continue
                     else:
                         # At least one unit field is present
                         try:
@@ -2597,19 +2706,16 @@ class ZeroFailValidator:
             # Reason: Claim-level dates are often unreliable (swapped, typos).
             # Service-level dates (DTM*150/472/151) are more accurate.
             # See DATE_STRUCTURE_ANALYSIS.md for details.
-            try:
-                charge = float(claim_row.get('CLM_ChargeAmount_L2100_CLP', 0) or 0)
-                payment = float(claim_row.get('CLM_PaymentAmount_L2100_CLP', 0) or 0)
-                interest = float(claim_row.get('CLM_InterestAmount_L2100_AMT', 0) or 0)
-            except:
-                pass
+            charge = self._parse_currency(claim_row.get('CLM_ChargeAmount_L2100_CLP', 0))
+            payment = self._parse_currency(claim_row.get('CLM_PaymentAmount_L2100_CLP', 0))
+            interest = self._parse_currency(claim_row.get('CLM_InterestAmount_L2100_AMT', 0))
             
             # Validate Allowed Amount calculations
             # Service-level: Method1 (Charge - CO) should equal Method2 (Payment + PR)
             for svc_row in service_rows:
                 try:
-                    svc_method1 = float(svc_row.get('Allowed_Amount', 0) or 0)
-                    svc_method2 = float(svc_row.get('Allowed_Verification', 0) or 0)
+                    svc_method1 = self._parse_currency(svc_row.get('Allowed_Amount', 0))
+                    svc_method2 = self._parse_currency(svc_row.get('Allowed_Verification', 0))
                     
                     # Skip if both are zero (likely no service data)
                     if svc_method1 == 0 and svc_method2 == 0:
@@ -2618,8 +2724,8 @@ class ZeroFailValidator:
                     # Check if methods match (within $0.01 tolerance)
                     if abs(svc_method1 - svc_method2) > 0.01:
                         proc = svc_row.get('SVC_ProcedureCode_L2110_SVC', 'Unknown')
-                        svc_charge = float(svc_row.get('SVC_ChargeAmount_L2110_SVC', 0) or 0)
-                        svc_payment = float(svc_row.get('SVC_PaymentAmount_L2110_SVC', 0) or 0)
+                        svc_charge = self._parse_currency(svc_row.get('SVC_ChargeAmount_L2110_SVC', 0))
+                        svc_payment = self._parse_currency(svc_row.get('SVC_PaymentAmount_L2110_SVC', 0))
                         self.warnings.append(ValidationError(
                             'CALC',
                             f"Service allowed amount mismatch: Method1 (Charge-CO)=${svc_method1:.2f} vs Method2 (Payment+PR)=${svc_method2:.2f}",
@@ -2629,7 +2735,11 @@ class ZeroFailValidator:
                             payer_info=claim_payer_info
                         ))
                 except (ValueError, TypeError):
-                    pass
+                    proc = svc_row.get('SVC_ProcedureCode_L2110_SVC', 'unknown')
+                    logger.warning("Invalid service allowed amount values for claim %s, service %s: allowed_amount='%s', allowed_verification='%s'",
+                                 display_claim_id, proc,
+                                 svc_row.get('Allowed_Amount'),
+                                 svc_row.get('Allowed_Verification'))
 
     def _validate_loop_structure(self, edi_data: Dict):
         """Validate loop structure follows X12 835 rules"""
@@ -2728,6 +2838,7 @@ class ZeroFailValidator:
             'missing_mappings': dict(self.stats['missing_mappings']),
             'payers_missing_mileage_units': dict(self.stats['payers_missing_mileage_units']),
             'payer_data_quality_issues': {k: dict(v) for k, v in self.stats['payer_data_quality_issues'].items()},
+            'priority_rarc_codes': {k: dict(v) for k, v in self.stats['priority_rarc_codes'].items()},
             'date_format_validation': self.stats.get('date_format_validation', {}),
             'sample_errors': self._get_sample_errors(csv_rows),
             'validation_timestamp': datetime.now().isoformat()
@@ -3044,7 +3155,7 @@ def generate_html_report(validation_result: Dict, redact: bool = True) -> str:
         body {
             font-family: Arial, sans-serif;
             margin: 20px;
-            background-color:
+            background-color: #f5f5f5;
         }
         .container {
             max-width: 1200px;
@@ -3053,10 +3164,10 @@ def generate_html_report(validation_result: Dict, redact: bool = True) -> str:
             padding: 20px;
             box-shadow: 0 0 10px rgba(0,0,0,0.1);
         }
-        h1, h2, h3 { color:
-        .pass { color:
-        .fail { color:
-        .warning { color:
+        h1, h2, h3 { color: #333; }
+        .pass { color: #28a745; }
+        .fail { color: #dc3545; }
+        .warning { color: #ffc107; }
         .summary-table {
             width: 100%;
             border-collapse: collapse;
@@ -3064,32 +3175,32 @@ def generate_html_report(validation_result: Dict, redact: bool = True) -> str:
         }
         .summary-table td, .summary-table th {
             padding: 10px;
-            border: 1px solid
+            border: 1px solid #ddd;
             text-align: left;
         }
         .summary-table th {
-            background-color:
+            background-color: #f8f9fa;
             font-weight: bold;
         }
         .error-box {
-            background-color:
-            border: 1px solid
-            color:
+            background-color: #f8d7da;
+            border: 1px solid #f5c6cb;
+            color: #721c24;
             padding: 10px;
             margin: 10px 0;
             border-radius: 4px;
         }
         .warning-box {
-            background-color:
-            border: 1px solid
-            color:
+            background-color: #fff3cd;
+            border: 1px solid #ffeaa7;
+            color: #856404;
             padding: 10px;
             margin: 10px 0;
             border-radius: 4px;
         }
         .code-sample {
-            background-color:
-            border: 1px solid
+            background-color: #f4f4f4;
+            border: 1px solid #ddd;
             padding: 10px;
             font-family: monospace;
             font-size: 12px;
@@ -3103,15 +3214,15 @@ def generate_html_report(validation_result: Dict, redact: bool = True) -> str:
             font-weight: bold;
             margin-right: 5px;
         }
-        .error-type.calc { background-color:
-        .error-type.missing { background-color:
-        .error-type.mismatch { background-color:
-        .error-type.mapping { background-color:
-        .error-type.edge { background-color:
+        .error-type.calc { background-color: #ff6b6b; color: white; }
+        .error-type.missing { background-color: #ffa500; color: white; }
+        .error-type.mismatch { background-color: #dc3545; color: white; }
+        .error-type.mapping { background-color: #6c757d; color: white; }
+        .error-type.edge { background-color: #17a2b8; color: white; }
         .collapsible {
             cursor: pointer;
             padding: 10px;
-            background-color:
+            background-color: #e9ecef;
             border: none;
             text-align: left;
             outline: none;
@@ -3132,7 +3243,7 @@ def generate_html_report(validation_result: Dict, redact: bool = True) -> str:
             max-height: 0;
             overflow: hidden;
             transition: max-height 0.2s ease-out;
-            background-color:
+            background-color: #f8f9fa;
         }
     </style>
 </head>
@@ -3237,7 +3348,7 @@ def generate_html_report(validation_result: Dict, redact: bool = True) -> str:
     if validation_result.get('payers_missing_mileage_units'):
         html_parts.append("""
     <h3>Payers with Missing Mileage Unit Data</h3>
-    <p style="background-color:
+    <p style="background-color: #fff6d5; padding: 10px; border-left: 4px solid #ffc107;">
         The following payers sent mileage service lines (A0425/A0435/A0436) without ANY unit data
         in SVC05 or SVC07. This is a payer data quality issue.
     </p>
@@ -3255,6 +3366,26 @@ def generate_html_report(validation_result: Dict, redact: bool = True) -> str:
         <strong>Missing Unit Count:</strong> {count} service line(s)
     </div>
 """)
+    # Priority RARC codes section - highlight payer-specific codes that need attention
+    if validation_result.get('priority_rarc_codes'):
+        html_parts.append("""
+    <h3>Priority RARC Codes Detected</h3>
+    <p style="background-color: #e7f3fe; padding: 10px; border-left: 4px solid #2196F3;">
+        The following payer-specific RARC codes were detected. These codes may require special attention
+        as they are priority codes for the identified payers.
+    </p>
+""")
+        for payer_key, codes in validation_result['priority_rarc_codes'].items():
+            if codes:  # Only show if there are priority codes
+                html_parts.append(f"""
+    <div style="background-color: #e7f3fe; border: 1px solid #2196F3; padding: 10px; margin: 10px 0; border-radius: 4px;">
+        <strong>Payer:</strong> {html.escape(payer_key)}<br>
+        <strong>Priority RARC Codes:</strong><br>
+""")
+                for code, count in sorted(codes.items()):
+                    desc = dictionary.get_remark_code_description(code)
+                    html_parts.append(f"        • <code>{html.escape(code)}</code>: {html.escape(desc)} ({count} occurrence(s))<br>")
+                html_parts.append("    </div>")
     if validation_result.get('missing_mappings'):
         html_parts.append("""
     <h3>Missing Dictionary Mappings</h3>
@@ -3332,7 +3463,7 @@ for (i = 0; i < coll.length; i++) {
 def validate_835_output(edi_segments, csv_rows: List[dict],
                        element_delimiter: str = '*', output_file: str = None,
                        output_format: str = 'text', verbose: bool = False, debug: bool = False,
-                       status_callback=None) -> Dict:
+                       status_callback=None, payer_keys: Dict = None) -> Dict:
     """Main validation entry point
     Args:
         edi_segments: Either List[str] (flat segments) or List[dict] with file context
@@ -3344,8 +3475,9 @@ def validate_835_output(edi_segments, csv_rows: List[dict],
         verbose: Enable verbose output
         debug: Enable detailed debugging with X12 spec references
         status_callback: Optional callback for GUI status updates
+        payer_keys: Optional dict mapping file index to payer key for payer-specific overrides
     """
-    validator = ZeroFailValidator(debug=debug)
+    validator = ZeroFailValidator(debug=debug, payer_keys=payer_keys)
     
     # Handle file-aware segment data (new format) or flat list (legacy)
     if edi_segments and isinstance(edi_segments[0], dict) and 'segments' in edi_segments[0]:
@@ -3354,12 +3486,12 @@ def validate_835_output(edi_segments, csv_rows: List[dict],
         for file_data in edi_segments:
             all_segments.extend(file_data['segments'])
         if debug:
-            print(f"[DEBUG] Starting validation with {len(edi_segments)} files, {len(all_segments)} total segments and {len(csv_rows)} CSV rows")
+            logger.debug("Starting validation with %d files, %d total segments and %d CSV rows", len(edi_segments), len(all_segments), len(csv_rows))
         validation_result = validator.validate_all_by_file(edi_segments, csv_rows, verbose=verbose, status_callback=status_callback)
     else:
         # Legacy format: flat list of segments
         if debug:
-            print(f"[DEBUG] Starting validation with {len(edi_segments)} EDI segments and {len(csv_rows)} CSV rows")
+            logger.debug("Starting validation with %d EDI segments and %d CSV rows", len(edi_segments), len(csv_rows))
         validation_result = validator.validate_all(edi_segments, csv_rows, element_delimiter, verbose=verbose, status_callback=status_callback)
     if status_callback:
         status_callback("Generating validation reports...")
