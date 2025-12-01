@@ -21,7 +21,6 @@ DefaultDirName={autopf}\{#MyAppName}
 DefaultGroupName={#MyAppName}
 AllowNoIcons=yes
 SetupIconFile=app_icon.ico
-UninstallDisplayIcon={app}\{#MyAppExeName}
 OutputDir=installer_output
 OutputBaseFilename=835-EDI-Parser-Setup-v{#MyAppVersion}
 Compression=lzma
