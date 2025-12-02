@@ -138,14 +138,6 @@ config = get_config(config_file='path/to/custom_config.json')
 |------------|---------------------|---------|-------------|
 | `log_level` | `EDI_LOG_LEVEL` | `INFO` | Logging level: `DEBUG`, `INFO`, `WARNING`, `ERROR` |
 | `log_file` | `EDI_LOG_FILE` | `null` | Path to log file (null = console only) |
-| `simple_log_format` | N/A | `false` | Use simple format without timestamps (for GUI) |
-
-### Performance Options
-
-| Config Key | Environment Variable | Default | Description |
-|------------|---------------------|---------|-------------|
-| `chunk_size` | `EDI_CHUNK_SIZE` | `10000` | Progress feedback interval (rows) |
-| `validation_verbose` | N/A | `true` | Show detailed validation progress |
 
 ---
 
@@ -168,10 +160,7 @@ Create `835_config.json` in your working directory or home directory:
   "enable_compact_csv": true,
 
   "log_level": "INFO",
-  "log_file": "C:\\Logs\\835_parser.log",
-
-  "chunk_size": 10000,
-  "validation_verbose": true
+  "log_file": "C:\\Logs\\835_parser.log"
 }
 ```
 

@@ -44,11 +44,6 @@ class Config:
         # Logging configuration
         "log_level": "INFO",
         "log_file": None,  # None = console only
-        "simple_log_format": False,
-        # Memory optimization
-        "chunk_size": 10000,  # Progress feedback interval
-        # Validation options
-        "validation_verbose": True,
     }
 
     def __init__(self, config_file: Optional[str] = None):
@@ -103,7 +98,7 @@ class Config:
             return
 
         try:
-            with open(config_path) as f:
+            with open(config_path, encoding="utf-8") as f:
                 file_config = json.load(f)
 
             # Update config with file values
@@ -130,23 +125,18 @@ class Config:
             "EDI_ENABLE_COMPACT_CSV": "enable_compact_csv",
             "EDI_LOG_LEVEL": "log_level",
             "EDI_LOG_FILE": "log_file",
-            "EDI_CHUNK_SIZE": "chunk_size",
         }
 
         for env_var, config_key in env_mapping.items():
             value = os.getenv(env_var)
             if value is not None:
-                # Type conversion for boolean and integer values
+                # Type conversion for boolean values
                 if config_key in [
                     "enable_fair_health_rates",
                     "enable_trips_lookup",
                     "enable_compact_csv",
-                    "validation_verbose",
-                    "simple_log_format",
                 ]:
                     value = value.lower() in ("true", "1", "yes", "on")
-                elif config_key in ["chunk_size"]:
-                    value = int(value)
 
                 self._config[config_key] = value
                 logger.debug("Config from env %s: %s = %s", env_var, config_key, value)
@@ -170,12 +160,18 @@ class Config:
     @property
     def trips_csv_path(self) -> Optional[str]:
         """Path to Trips.csv file (None if not configured)"""
-        return self._config["trips_csv_path"]
+        path = self._config["trips_csv_path"]
+        if path:
+            return os.path.expanduser(path)
+        return path
 
     @property
     def rates_xlsx_path(self) -> Optional[str]:
         """Path to RATES.xlsx file (None if not configured)"""
-        return self._config["rates_xlsx_path"]
+        path = self._config["rates_xlsx_path"]
+        if path:
+            return os.path.expanduser(path)
+        return path
 
     @property
     def output_csv_name(self) -> str:
@@ -196,6 +192,14 @@ class Config:
     def validation_report_html_name(self) -> str:
         """Validation report HTML file name"""
         return self._config["validation_report_html_name"]
+
+    @property
+    def log_file(self) -> Optional[str]:
+        """Path to log file (None if not configured)"""
+        path = self._config["log_file"]
+        if path:
+            return os.path.expanduser(path)
+        return path
 
     def to_dict(self) -> Dict[str, Any]:
         """Export current configuration as dictionary"""

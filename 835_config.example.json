@@ -16,9 +16,5 @@
   "enable_compact_csv": true,
 
   "log_level": "INFO",
-  "log_file": null,
-  "simple_log_format": false,
-
-  "chunk_size": 10000,
-  "validation_verbose": true
+  "log_file": null
 }
