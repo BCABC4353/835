@@ -26,8 +26,19 @@ __pycache__/
 *.txt
 *.html
 
-# But keep example/template files
+# But keep example/template files and documentation
 !835_config.example.json
+!LICENSE.txt
+!X12.txt
+!requirements.txt
+!CONFIG_README.md
+!BUILD_INSTALLER.md
+!QUICKSTART.md
+!AUTOMATED_BUILD.md
+!DEPLOYMENT_TEST_CHECKLIST.md
+!VERSION_SYNC.md
+!KNOWN_LIMITATIONS.md
+!CHANGELOG_CONFIG_CLEANUP.md
 
 # OS files
 .DS_Store

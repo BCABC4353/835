@@ -15,7 +15,7 @@ a = Analysis(
     datas=[
         # Include documentation
         ('CONFIG_README.md', '.'),
-        # Include example config
+        # Include example config (NOT the actual config - users create their own)
         ('835_config.example.json', '.'),
     ],
     hiddenimports=[
@@ -38,7 +38,7 @@ a = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=[],
+    excludes=['835_config.json'],  # Don't bundle user's personal config
     win_no_prefer_redirects=False,
     win_private_assemblies=False,
     cipher=block_cipher,

@@ -476,7 +476,7 @@ def parse_835_file(file_path):
     Args:
         file_path: Path to the 835 file
     """
-    with open(file_path) as f:
+    with open(file_path, encoding="utf-8", errors="replace") as f:
         content = f.read()
 
     content = content.rstrip()
@@ -4825,6 +4825,8 @@ def process_folder(folder_path, enable_redaction=False, status_callback=None):
     validation_data = []  # Minimal data needed for validation (segments + delimiter only)
     # Track payer keys for validation overrides (indexed by file position in validation_data)
     payer_keys_map = {}
+    # Track failed files for user notification
+    failed_files = []
 
     # Track EDI element presence across all files to find unmapped elements
     element_tracker = EDIElementPresenceTracker()
@@ -4840,7 +4842,7 @@ def process_folder(folder_path, enable_redaction=False, status_callback=None):
                 # Store only what's needed for validation (not the full 'content' string)
                 validation_data.append(
                     {
-                        "file": str(file_path),
+                        "file": os.path.basename(file_path),  # Use filename only for security
                         "segments": parsed_data["segments"],
                         "delimiter": parsed_data["element_delimiter"],
                     }
@@ -4861,7 +4863,8 @@ def process_folder(folder_path, enable_redaction=False, status_callback=None):
                     element_tracker.track_segment(seg, elements, parsed_data["element_delimiter"])
 
                 # Determine the file path to use in the CSV
-                csv_file_path = str(file_path)
+                # Use only filename (not full path) to avoid exposing directory structure
+                csv_file_path = os.path.basename(file_path)
 
                 if enable_redaction and testing_folder:
                     try:
@@ -4895,7 +4898,21 @@ def process_folder(folder_path, enable_redaction=False, status_callback=None):
                     raise
         except Exception as e:
             logger.error("  - ERROR: %s", str(e))
+            failed_files.append({"file": file_name, "error": str(e)})
             continue
+
+    # Report failed files prominently
+    if failed_files:
+        logger.warning("=" * 80)
+        logger.warning("WARNING: %d of %d files failed to process", len(failed_files), len(files))
+        logger.warning("=" * 80)
+        for failed in failed_files:
+            logger.warning("  FAILED: %s", failed["file"])
+            logger.warning("    Error: %s", failed["error"])
+        logger.warning("=" * 80)
+        if status_callback:
+            status_callback(f"⚠ Warning: {len(failed_files)} file(s) failed to process")
+
     if not all_rows:
         logger.warning("No data extracted from any files")
         return None

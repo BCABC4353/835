@@ -210,6 +210,10 @@ class ProcessingWindow:
         self.root.geometry("1000x700")
         self.root.configure(background="#f0f0f0")
 
+        # Thread management
+        self.processing_thread = None
+        self.shutdown_event = threading.Event()
+
         # Configure ttk styles
         self.style = ttk.Style()
         self.style.theme_use("clam")
@@ -339,19 +343,28 @@ class ProcessingWindow:
             return
 
         # Run processing in background thread to keep GUI responsive
-        processing_thread = threading.Thread(target=self._process_files_thread, args=(folder_path,), daemon=True)
-        processing_thread.start()
+        self.processing_thread = threading.Thread(target=self._process_files_thread, args=(folder_path,), daemon=False)
+        self.processing_thread.start()
 
     def _process_files_thread(self, folder_path):
         """Background thread for processing files - keeps GUI responsive"""
         try:
+            # Check if shutdown was requested
+            if self.shutdown_event.is_set():
+                return
+
             # Import process_folder from parser module
             # Note: Import is done here to avoid circular import when gui.py is imported from parser_835.py
             from parser_835 import process_folder
 
-            self.root.after(0, lambda: self.status_label.config(text="Processing files..."))
-            self.root.after(0, lambda: self.select_button.config(state=tk.DISABLED))
-            self.root.after(0, lambda: self.progress.start())
+            # Safe GUI updates - check if window still exists
+            try:
+                self.root.after(0, lambda: self.status_label.config(text="Processing files..."))
+                self.root.after(0, lambda: self.select_button.config(state=tk.DISABLED))
+                self.root.after(0, lambda: self.progress.start())
+            except tk.TclError:
+                # Window was destroyed, abort processing
+                return
 
             print(f"Processing 835 files in: {folder_path}\n")
 
@@ -370,32 +383,58 @@ class ProcessingWindow:
 
             result = process_folder(folder_path, enable_redaction, status_callback=update_status)
 
-            # Ensure GUI updates happen on main thread
-            self.root.after(0, lambda: self.progress.stop())
-            self.root.after(0, lambda: self.select_button.config(state=tk.NORMAL))
+            # Ensure GUI updates happen on main thread (with TclError protection)
+            try:
+                self.root.after(0, lambda: self.progress.stop())
+                self.root.after(0, lambda: self.select_button.config(state=tk.NORMAL))
+            except tk.TclError:
+                return  # Window was destroyed
 
             # Update status labels based on result
-            if result:
-                self.root.after(0, lambda: self.status_label.config(text="✅ All processing complete!"))
-                self.root.after(0, lambda: self.operation_label.config(text="All processing complete!"))
-            else:
-                self.root.after(0, lambda: self.status_label.config(text="⚠ No data extracted"))
-                self.root.after(0, lambda: self.operation_label.config(text="No data extracted"))
+            # Check if there were any warnings during processing (from failed files)
+            def update_final_status():
+                current_op = self.operation_label.cget("text")
+                if result:
+                    # If operation label shows a warning, keep it; otherwise show success
+                    if "Warning" in current_op or "failed" in current_op.lower():
+                        self.status_label.config(text="⚠ Processing completed with errors")
+                        # Keep the warning message in operation_label
+                    else:
+                        self.status_label.config(text="✅ All processing complete!")
+                        self.operation_label.config(text="All processing complete!")
+                else:
+                    self.status_label.config(text="⚠ No data extracted")
+                    self.operation_label.config(text="No data extracted")
+
+            try:
+                self.root.after(0, update_final_status)
+            except tk.TclError:
+                return  # Window was destroyed
 
         except Exception as e:
-            self.root.after(0, lambda: self.progress.stop())
-            self.root.after(0, lambda: self.select_button.config(state=tk.NORMAL))
+            # Safely update GUI with TclError protection
+            try:
+                self.root.after(0, lambda: self.progress.stop())
+                self.root.after(0, lambda: self.select_button.config(state=tk.NORMAL))
+            except tk.TclError:
+                return  # Window was destroyed
 
-            # Print detailed error with full traceback to GUI
-            import traceback
+            # Print error without PHI (no full traceback with variable values)
 
             error_msg = f"\n{'='*80}\nERROR DURING PROCESSING\n{'='*80}\n"
             error_msg += f"Error Type: {type(e).__name__}\n"
             error_msg += f"Error Message: {str(e)}\n"
-            error_msg += f"\nFull Traceback:\n{'-'*80}\n"
+            error_msg += "\nIf this error persists, please contact BCABC support.\n"
             print(error_msg)
-            traceback.print_exc()  # Now goes to stderr which is redirected to GUI
             print(f"{'='*80}\n")
+
+            # Log full traceback to file (not shown in GUI to avoid PHI exposure)
+            try:
+                import logging
+
+                logging.error("Processing error", exc_info=True)
+            except Exception:
+                pass  # If logging fails, don't crash
 
             self.root.after(0, lambda: self.status_label.config(text="❌ Error during processing"))
             self.root.after(0, lambda: self.operation_label.config(text="See error details above"))
@@ -442,7 +481,27 @@ class ProcessingWindow:
             # Return control to caller instead of exiting
 
     def on_closing(self):
-        """Handle window close event"""
+        """Handle window close event - wait for processing to finish"""
+        # Check if processing is running
+        if self.processing_thread and self.processing_thread.is_alive():
+            response = messagebox.askyesno(
+                "Processing In Progress",
+                "File processing is still running. Closing now may result in incomplete output files.\n\n"
+                "Do you want to close anyway?",
+                icon="warning",
+            )
+            if not response:
+                return  # User chose to wait
+
+            # User chose to force close - signal shutdown
+            self.shutdown_event.set()
+            print("\n⚠ Shutdown requested. Waiting for current file to finish...\n")
+
+            # Give thread 3 seconds to finish current operation
+            self.processing_thread.join(timeout=3.0)
+            if self.processing_thread.is_alive():
+                print("⚠ Warning: Processing thread did not stop cleanly. Files may be incomplete.\n")
+
         # Restore stdout/stderr to originals
         sys.stdout = sys.__stdout__
         sys.stderr = sys.__stderr__

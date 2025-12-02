@@ -8,7 +8,7 @@
 
 #define MyAppName "835 EDI Parser"
 #define MyAppVersion "1.0.0"
-#define MyAppPublisher "Your Organization Name"
+#define MyAppPublisher "BCABC"
 #define MyAppExeName "835-EDI-Parser.exe"
 
 [Setup]
@@ -26,7 +26,8 @@ OutputBaseFilename=835-EDI-Parser-Setup-v{#MyAppVersion}
 Compression=lzma
 SolidCompression=yes
 WizardStyle=modern
-PrivilegesRequired=admin
+PrivilegesRequired=lowest
+PrivilegesRequiredOverridesAllowed=dialog
 
 ; UI settings
 DisableProgramGroupPage=yes
