@@ -12,8 +12,40 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
-    "mypy",
+    "mypy>=1.19",
+    "ruff>=0.14",
+    "black>=25.0",
+    "isort>=7.0",
+    "pytest>=9.0",
+    "pytest-cov>=7.0",
+    "rich>=14.0",
 ]
+
+[tool.ruff]
+line-length = 120
+target-version = "py38"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "C4", "UP"]
+ignore = ["E501", "B023"]  # E501: Line too long, B023: Lambda captures loop var (false positive when called immediately)
+
+[tool.black]
+line-length = 120
+target-version = ["py38", "py39", "py310", "py311", "py312"]
+
+[tool.isort]
+profile = "black"
+line_length = 120
+
+[tool.mypy]
+python_version = "3.8"
+warn_return_any = true
+warn_unused_ignores = true
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-v --tb=short"
 
 [build-system]
 requires = ["setuptools>=65", "wheel"]
@@ -24,4 +56,3 @@ edi-835-parser = "parser_835:main"
 
 [project.gui-scripts]
 edi-835-parser-gui = "gui:main"
-
