@@ -411,33 +411,50 @@ class ProcessingWindow:
             except tk.TclError:
                 return  # Window was destroyed
 
+        except OSError as e:
+            # File access errors (missing files, permissions, disk full, etc.)
+            self._handle_processing_error(e, "File access error")
+        except (ValueError, KeyError, IndexError) as e:
+            # Data parsing/format errors
+            self._handle_processing_error(e, "Data format error")
+        except ImportError as e:
+            # Missing dependencies
+            self._handle_processing_error(e, "Missing dependency")
         except Exception as e:
-            # Safely update GUI with TclError protection
-            try:
-                self.root.after(0, lambda: self.progress.stop())
-                self.root.after(0, lambda: self.select_button.config(state=tk.NORMAL))
-            except tk.TclError:
-                return  # Window was destroyed
+            # Catch-all for background thread: prevents thread crash and ensures GUI cleanup
+            # This is intentionally broad as it's the last line of defense in a background thread
+            self._handle_processing_error(e, "Unexpected error")
 
-            # Print error without PHI (no full traceback with variable values)
+    def _handle_processing_error(self, error, error_category):
+        """Handle processing errors with safe GUI updates and PHI-safe logging."""
+        # Safely update GUI with TclError protection
+        try:
+            self.root.after(0, lambda: self.progress.stop())
+            self.root.after(0, lambda: self.select_button.config(state=tk.NORMAL))
+        except tk.TclError:
+            return  # Window was destroyed
 
-            error_msg = f"\n{'='*80}\nERROR DURING PROCESSING\n{'='*80}\n"
-            error_msg += f"Error Type: {type(e).__name__}\n"
-            error_msg += f"Error Message: {str(e)}\n"
-            error_msg += "\nIf this error persists, please contact BCABC support.\n"
-            print(error_msg)
-            print(f"{'='*80}\n")
+        # Print error without PHI (no full traceback with variable values)
+        error_msg = f"\n{'='*80}\n{error_category.upper()}\n{'='*80}\n"
+        error_msg += f"Error Type: {type(error).__name__}\n"
+        error_msg += f"Error Message: {str(error)}\n"
+        error_msg += "\nIf this error persists, please contact BCABC support.\n"
+        print(error_msg)
+        print(f"{'='*80}\n")
 
-            # Log full traceback to file (not shown in GUI to avoid PHI exposure)
-            try:
-                import logging
+        # Log full traceback to file (not shown in GUI to avoid PHI exposure)
+        try:
+            import logging
 
-                logging.error("Processing error", exc_info=True)
-            except Exception:
-                pass  # If logging fails, don't crash
+            logging.error("Processing error: %s", error_category, exc_info=True)
+        except Exception:
+            pass  # If logging fails, don't crash
 
+        try:
             self.root.after(0, lambda: self.status_label.config(text="❌ Error during processing"))
             self.root.after(0, lambda: self.operation_label.config(text="See error details above"))
+        except tk.TclError:
+            return  # Window was destroyed
 
     def run(self):
         """Start the GUI main loop"""

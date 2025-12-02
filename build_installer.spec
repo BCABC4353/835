@@ -13,8 +13,6 @@ a = Analysis(
     pathex=[],
     binaries=[],
     datas=[
-        # Include documentation
-        ('CONFIG_README.md', '.'),
         # Include example config (NOT the actual config - users create their own)
         ('835_config.example.json', '.'),
     ],

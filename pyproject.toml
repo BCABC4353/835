@@ -1,8 +1,7 @@
 [project]
 name = "edi-835-parser"
-version = "1.0.0"
+dynamic = ["version"]
 description = "Parser for HIPAA 835 EDI remittance files with Fair Health rate lookup"
-readme = "CONFIG_README.md"
 requires-python = ">=3.8"
 license = {text = "Proprietary"}
 
@@ -43,13 +42,12 @@ warn_return_any = true
 warn_unused_ignores = true
 ignore_missing_imports = true
 
-[tool.pytest.ini_options]
-testpaths = ["tests"]
-addopts = "-v --tb=short"
-
 [build-system]
 requires = ["setuptools>=65", "wheel"]
 build-backend = "setuptools.build_meta"
+
+[tool.setuptools.dynamic]
+version = {attr = "version.__version__"}
 
 [project.scripts]
 edi-835-parser = "parser_835:main"

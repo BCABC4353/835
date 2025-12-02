@@ -1,16 +1,20 @@
 {
   "permissions": {
     "allow": [
-      "Bash(dir /s /b)",
-      "Bash(dir:*)",
-      "Bash(python:*)",
-      "WebSearch",
-      "Bash(for file in \"C:\\Users\\Brendan Cameron\\Downloads\\835 2019-2021\\LIFE_MEDI_CAL_FISCAL_INTERMEDIARY_20210104_20210105062637_cEDI.txt.PROCESSED\" \"C:\\Users\\Brendan Cameron\\Downloads\\835 2019-2021\\LIFE_MEDI_CAL_FISCAL_INTERMEDIARY_20210113_20210114062348_cEDI.txt.PROCESSED\" \"C:\\Users\\Brendan Cameron\\Downloads\\835 2019-2021\\LIFE_MEDI_CAL_FISCAL_INTERMEDIARY_20210115_20210116062403_cEDI.txt.PROCESSED\")",
-      "Bash(findstr:*)",
-      "Bash(py:*)",
-      "Bash(git init:*)",
+      "Bash(git commit -m \"$(cat <<''EOF''\nAdd automated GitHub Actions installer builds\n\nThis commit enables automatic installer builds on every push to master,\nmatching the PowerBI viewer workflow.\n\nAUTOMATED BUILD SYSTEM:\n- GitHub Actions workflows automatically build Windows installer on push\n- No manual PyInstaller or InnoSetup steps required\n- Download installer from GitHub Actions artifacts\n- Optional: Create releases with version tags (v1.0.0)\n\nBUILD WORKFLOWS:\n- build-on-push.yml: Builds on every push to master (30-day retention)\n- build-installer.yml: Builds on version tags (creates GitHub releases)\n\nINSTALLER CONFIGURATION:\n- build_installer.spec: PyInstaller spec for bundling Python app\n- installer.iss: InnoSetup script for Windows installer creation\n- LICENSE.txt: Software license (required by InnoSetup)\n\nCONFIG FIX:\n- Fixed config file save location to user-writable AppData directory\n- Settings now save to %APPDATA%\\835-EDI-Parser\\835_config.json\n- Prevents write failures when installed to Program Files\n\nDOCUMENTATION:\n- AUTOMATED_BUILD.md: Explains automated workflow (same as PowerBI viewer)\n- BUILD_INSTALLER.md: Manual build instructions (if needed)\n- QUICKSTART.md: Simple 3-step manual build guide\n\nUSER EXPERIENCE:\n- Installer can optionally configure file paths during installation\n- Or configure later via Settings menu\n- All settings persist in user-writable location\n- Clean uninstall support\n\nWORKFLOW:\n1. Push code to Git\n2. Wait 3-5 minutes for automated build\n3. Download installer from GitHub Actions\n4. Distribute to users\n\nSame workflow as PowerBI viewer - just push and download!\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nCo-Authored-By: Claude <noreply@anthropic.com>\nEOF\n)\")",
+      "Bash(gh run list:*)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:api.github.com)",
+      "Bash(git commit:*)",
+      "Bash(git tag:*)",
       "Bash(git add:*)",
-      "Bash(rm:*)"
+      "Bash(git push:*)",
+      "Bash(gh auth status:*)",
+      "Bash(cat:*)",
+      "Bash(py:*)",
+      "Bash(dir:*)",
+      "Bash(git rm:*)",
+      "Bash(python get_version.py:*)"
     ],
     "deny": [],
     "ask": []

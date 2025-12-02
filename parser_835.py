@@ -97,8 +97,16 @@ class EDIProcessor:
             logger.info("Loaded Fair Health rates: %s rate combinations", stats["rate_keys"])
             logger.debug("  ZIP codes: %s, HCPCS codes: %s", stats["unique_zips"], stats["unique_hcpcs"])
             return True
-        except Exception as e:
-            logger.warning("Failed to load Fair Health rates: %s", e)
+        except ImportError as e:
+            logger.warning("Failed to load Fair Health rates - missing dependency: %s", e)
+            self.fair_health_rates = None
+            return False
+        except OSError as e:
+            logger.warning("Failed to load Fair Health rates - file error: %s", e)
+            self.fair_health_rates = None
+            return False
+        except (KeyError, ValueError) as e:
+            logger.warning("Failed to load Fair Health rates - data format error: %s", e)
             self.fair_health_rates = None
             return False
 
@@ -1235,74 +1243,6 @@ def extract_secondary_payer_info(claim):
         "SecondaryPayerIDQualifier": secondary_payer_id_qualifier,
         "SecondaryPayerID": secondary_payer_id,
     }
-
-
-# DEAD CODE - extract_provider_info is never called; provider info is parsed in convert_segments_to_rows main loop
-# def extract_provider_info(segments, element_delimiter='|'):
-#     provider_info = {
-#         'ProviderName': '',
-#         'ProviderEntityIDCode': '',  # N101 - Entity Identifier Code (PE)
-#         'ProviderIDQualifier': '',   # N103 - ID Code Qualifier
-#         'ProviderIDCode': '',        # N104 - ID Code
-#         'ProviderAddress': '',
-#         'ProviderCity': '',
-#         'ProviderState': '',
-#         'ProviderZip': '',
-#         'ProviderTIN': '',
-#         'ProviderSecondaryID': '',
-#         'ProviderTaxID': ''
-#     }
-#
-#     for idx, seg in enumerate(segments):
-#         elements = seg.split(element_delimiter)
-#
-#         if elements[0] == 'N1' and len(elements) > 1 and elements[1] == 'PE':
-#             provider_info['ProviderEntityIDCode'] = elements[1]  # N101 = "PE"
-#             if len(elements) > 2:
-#                 provider_info['ProviderName'] = elements[2]
-#             if len(elements) > 3:
-#                 provider_info['ProviderIDQualifier'] = elements[3]  # N103
-#             if len(elements) > 4:
-#                 provider_info['ProviderIDCode'] = elements[4]  # N104
-#                 provider_info['ProviderTIN'] = elements[4]  # Keep for backward compatibility
-#             if len(elements) > 5:
-#                 provider_info['EntityRelationship'] = elements[5]
-#                 provider_info['EntityRelationshipDesc'] = get_entity_relationship_description(elements[5])
-#             if len(elements) > 6:
-#                 provider_info['EntityIDSecondary'] = elements[6]
-#
-#             offset = 1
-#             while idx + offset < len(segments):
-#                 next_seg = segments[idx + offset]
-#                 next_elements = next_seg.split(element_delimiter)
-#
-#                 if next_elements[0] == 'N2':
-#                     # Additional Name Information
-#                     provider_info['ProviderNameLine2'] = next_elements[1] if len(next_elements) > 1 else ''
-#                     provider_info['ProviderNameLine3'] = next_elements[2] if len(next_elements) > 2 else ''
-#                 elif next_elements[0] == 'N3':
-#                     provider_info['ProviderAddress'] = next_elements[1] if len(next_elements) > 1 else ''
-#                 elif next_elements[0] == 'N4':
-#                     provider_info['ProviderCity'] = next_elements[1] if len(next_elements) > 1 else ''
-#                     provider_info['ProviderState'] = next_elements[2] if len(next_elements) > 2 else ''
-#                     provider_info['ProviderZip'] = next_elements[3] if len(next_elements) > 3 else ''
-#                 elif next_elements[0] == 'REF' and len(next_elements) > 2:
-#                     qualifier = next_elements[1]
-#                     value = next_elements[2]
-#                     if qualifier == 'PQ':
-#                         provider_info['ProviderSecondaryID'] = value
-#                     elif qualifier == 'TJ':
-#                         provider_info['ProviderTaxID'] = value
-#                 elif next_elements[0] in ['LX', 'CLP']:
-#                     break
-#
-#                 offset += 1
-#                 if offset > 10:
-#                     break
-#
-#             break
-#
-#     return provider_info
 
 
 def extract_ref_values(ref_list):
@@ -4791,8 +4731,8 @@ def process_folder(folder_path, enable_redaction=False, status_callback=None):
                 files.append(candidate)
             else:
                 skipped_files.append((candidate, f"Does not start with ISA (found: {repr(header)})"))
-        except Exception as e:
-            skipped_files.append((candidate, f"Could not read: {e}"))
+        except OSError as e:
+            skipped_files.append((candidate, f"Could not read file: {e}"))
 
     if skipped_files:
         logger.info("Skipped %d non-EDI file(s):", len(skipped_files))
@@ -4875,8 +4815,10 @@ def process_folder(folder_path, enable_redaction=False, status_callback=None):
                         logger.debug("  - Saved redacted EDI: %s", redacted_file_path.name)
                         # Use redacted file path for CSV
                         csv_file_path = str(redacted_file_path)
-                    except Exception as redact_error:
-                        logger.warning("  - Redaction failed: %s", str(redact_error))
+                    except OSError as redact_error:
+                        logger.warning("  - Redaction failed (file error): %s", str(redact_error))
+                    except (ValueError, IndexError, KeyError) as redact_error:
+                        logger.warning("  - Redaction failed (data error): %s", str(redact_error))
 
                 try:
                     rows = convert_segments_to_rows(
@@ -4897,7 +4839,10 @@ def process_folder(folder_path, enable_redaction=False, status_callback=None):
                         logger.error("    %s", line.rstrip())
                     raise
         except Exception as e:
+            # Broad catch-all for per-file processing: allows batch processing to continue
+            # even if one file has an unexpected error (e.g., corrupt data, encoding issues)
             logger.error("  - ERROR: %s", str(e))
+            logger.error("  - Error type: %s", type(e).__name__)
             failed_files.append({"file": file_name, "error": str(e)})
             continue
 
@@ -5349,8 +5294,12 @@ def process_folder(folder_path, enable_redaction=False, status_callback=None):
             if status_callback:
                 status_callback("Validation complete! Processing finished.")
 
-    except Exception as e:
-        logger.warning("Validation failed with error: %s", str(e))
+    except OSError as e:
+        logger.warning("Validation report generation failed (file error): %s", str(e))
+        logger.warning("  Could not write validation reports to disk")
+        logger.warning("  CSV output was still generated successfully")
+    except (ValueError, KeyError, TypeError) as e:
+        logger.warning("Validation failed (data error): %s", str(e))
         logger.warning("  Error type: %s", type(e).__name__)
         logger.warning("  Full traceback:")
         for line in traceback.format_tb(e.__traceback__):
