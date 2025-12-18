@@ -2323,6 +2323,19 @@ class ZeroFailValidator:
             "SVC_Modifier3_L2110_SVC",
             "SVC_Modifier4_L2110_SVC",
         ]
+        ambulance_service_codes = {
+            "A0425",
+            "A0426",
+            "A0427",
+            "A0428",
+            "A0429",
+            "A0430",
+            "A0431",
+            "A0432",
+            "A0433",
+            "A0434",
+        }
+        invalid_wound_modifiers_for_ambulance = {"A1", "A2", "A3", "A4", "A5", "A6", "A7", "A8", "A9"}
         # Remark code fields contain comma-separated values (e.g., "N130, N381")
         # Also check MOA/MIA remark code fields which are individual
         remark_fields_csv = [
@@ -2412,6 +2425,27 @@ class ZeroFailValidator:
                     desc = dictionary.get_ambulance_code_description(code)
                     is_gap = desc.startswith("Unknown")
                 elif code_field in modifier_fields:
+                    svc_code = row.get(ambulance_code_field, "").strip()
+                    if svc_code in ambulance_service_codes and code in invalid_wound_modifiers_for_ambulance:
+                        location = (
+                            f"Claim {row.get('CLM_PatientControlNumber_L2100_CLP', '')}, Service {row.get('SEQ', '')}"
+                        )
+                        payer_info = {
+                            "name": row.get("Payer_Name_L1000A_N1", ""),
+                            "state": row.get("Payer_State_L1000A_N4", ""),
+                            "id": row.get("CHK_PayerID_L1000A_REF", ""),
+                        }
+                        self.errors.append(
+                            ValidationError(
+                                "INVALID_AMBULANCE_MODIFIER",
+                                f"Invalid ambulance modifier for EMS (wound dressing series): {code}",
+                                location=location,
+                                field=code_field,
+                                actual=code,
+                                payer_info=payer_info,
+                            )
+                        )
+                        continue
                     desc = dictionary.get_ambulance_modifier_description(code)
                     is_gap = desc == code
                 elif code_field == "RARC":

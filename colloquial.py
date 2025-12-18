@@ -252,6 +252,65 @@ PAYER_REGISTRY = {
             "Uses NY-specific RARC codes (N426, N427, N428, N429, N892)",
         ],
     },
+    "MS_DOM": {
+        "description": "Mississippi Division of Medicaid (Title XIX)",
+        "identifiers": {
+            "trn03": [],
+            "isa06": [],
+            "payer_name": ["MSTXIX", "MISSISSIPPI DIVISION OF MEDICAID"],
+        },
+        "normalize_carc_codes": False,
+        "validation_overrides": {},
+        "parsing_rules": {},
+        "dictionary_overrides": {
+            "reference_qualifiers": {},
+            "priority_rarc_codes": [],
+        },
+        "notes": [
+            "Payer ID CKMS1 (Title XIX 835)",
+            "REF*G2 carries legacy/secondary provider IDs",
+            "A1-A9 wound-dressing modifiers are invalid on ambulance services",
+        ],
+    },
+    "MAGNOLIA_MS": {
+        "description": "Magnolia Health (MississippiCAN)",
+        "identifiers": {
+            "trn03": [],
+            "isa06": [],
+            "payer_name": ["MAGNOLIA HEALTH", "WELLCARE OF MISSISSIPPI, INC."],
+        },
+        "normalize_carc_codes": False,
+        "validation_overrides": {},
+        "parsing_rules": {},
+        "dictionary_overrides": {"reference_qualifiers": {}, "priority_rarc_codes": []},
+        "notes": ["Payer IDs 68069 (medical) / 68068 (behavioral health)"],
+    },
+    "MOLINA_MS": {
+        "description": "Molina Healthcare of Mississippi (MississippiCAN)",
+        "identifiers": {
+            "trn03": [],
+            "isa06": [],
+            "payer_name": ["MOLINA HEALTHCARE OF MISSISSIPPI", "MOLINA HEALTHCARE MS"],
+        },
+        "normalize_carc_codes": False,
+        "validation_overrides": {},
+        "parsing_rules": {},
+        "dictionary_overrides": {"reference_qualifiers": {}, "priority_rarc_codes": []},
+        "notes": ["Payer ID 77010", "ERA/835 via ECHO"],
+    },
+    "TRUECARE_MS": {
+        "description": "TrueCare Mississippi (MississippiCAN)",
+        "identifiers": {
+            "trn03": [],
+            "isa06": [],
+            "payer_name": ["TRUECARE MISSISSIPPI", "TRUECARE MS"],
+        },
+        "normalize_carc_codes": False,
+        "validation_overrides": {},
+        "parsing_rules": {},
+        "dictionary_overrides": {"reference_qualifiers": {}, "priority_rarc_codes": []},
+        "notes": ["Payer ID MSTRC (ERA 835)"],
+    },
     # Template for adding additional payers:
     # "PAYER_KEY": {
     #     "description": "Payer Name",

@@ -527,6 +527,7 @@ def get_ambulance_modifier_description(modifier):
         "CC": "Procedure Code Change - Corrected/Modified Code",
         "GV": "Attending Physician Not Employed or Paid Under Arrangement by Hospice Provider",
         "76": "Repeat Procedure or Service by Same Physician",
+        "77": "Repeat Procedure or Service by Another Physician",
         # ============================================================================
         # NY Medicaid Level of Care and Transportation Modifiers
         # ============================================================================
@@ -567,6 +568,8 @@ def get_ambulance_modifier_description(modifier):
         # ============================================================================
         "GC": "Resident Under Direction of Teaching Physician",
         "CG": "Policy Criteria Applied (Payer-Specific Coverage Determination)",
+        # Common lab/test modifier (not ambulance but seen on remits)
+        "QW": "CLIA Waived Test",
     }
     if len(modifier) == 2:
         first = modifier[0]
@@ -3211,6 +3214,8 @@ def get_reference_qualifier_description(code):
         "EJ": "Patient Account Number",
         "F8": "Original Reference Number",
         "G1": "Prior Authorization Number",
+        "G2": "Provider Commercial Number",
+        "EO": "Submitter Identification Number",
         "HJ": "HCFA/CMS Certification Number",
         "HPI": "Health Care Professional License Number",
         "IG": "Insurance Policy Number",

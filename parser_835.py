@@ -283,6 +283,8 @@ DISPLAY_COLUMN_NAMES = {
     "CLM_RepricedLineItemRefNumber_L2100_REF": "CLAIM REPRICED LINE ITEM REF",
     "CLM_AmbulatoryPaymentClassification_L2100_REF": "CLAIM APC",
     "CLM_NAICCode_L2100_REF": "CLAIM NAIC CODE",
+    "CLM_SubmitterID_L2100_REF": "SUBMITTER ID",
+    "CLM_ProviderCommercialNumber_L2100_REF": "PROVIDER COMMERCIAL ID",
     # Claim Level - DTM Dates (L2100)
     "CLM_ServiceStartDate_L2100_DTM": "DATE OF SERVICE",
     # Claim Level - LQ Remark Codes (L2100)
@@ -332,6 +334,8 @@ DISPLAY_COLUMN_NAMES = {
     "SVC_RepricedLineItemRefNumber_L2110_REF": "SERVICE REPRICED LINE ITEM REF",
     "SVC_AmbulatoryPaymentClassification_L2110_REF": "SERVICE APC",
     "SVC_NAICCode_L2110_REF": "SERVICE NAIC CODE",
+    "SVC_SubmitterID_L2110_REF": "SERVICE SUBMITTER ID",
+    "SVC_ProviderCommercialNumber_L2110_REF": "SERVICE PROVIDER COMMERCIAL ID",
     # Calculated Fields
     "Patient_NonCovered": "CALCULATED PATIENT NON COVERED",
     "Patient_OtherResp": "CALCULATED PATIENT OTHER",
@@ -1279,6 +1283,8 @@ def extract_ref_values(ref_list):
         "payee_identification": "",  # PQ
         "case_number": "",  # 9F (was referral_number)
         "hpid": "",  # HPI
+        "submitter_id": "",  # EO
+        "provider_commercial_number": "",  # G2
         # Repricing Reference Numbers
         "repriced_claim_ref_number": "",  # 9A - Repriced Claim Reference Number
         "repriced_line_item_ref_number": "",  # 9C - Repriced Line Item Reference Number
@@ -1354,6 +1360,10 @@ def extract_ref_values(ref_list):
             ref_values["ambulatory_payment_classification"] = val
         elif qual == "NF":
             ref_values["naic_code"] = val
+        elif qual == "EO":
+            ref_values["submitter_id"] = val
+        elif qual == "G2":
+            ref_values["provider_commercial_number"] = val
         elif qual == "HPI":
             ref_values["hpid"] = val
 
@@ -3837,6 +3847,8 @@ def create_output_row(
         # Institutional-only facility ID - not used for professional claims
         # 'CLM_FacilityIDNumber_L2100_REF': claim_ref_values.get('facility_id_number', ''),
         "CLM_PayersClaimNumber_L2100_REF": claim_ref_values.get("payers_claim_number", ""),
+        "CLM_SubmitterID_L2100_REF": claim_ref_values.get("submitter_id", ""),
+        "CLM_ProviderCommercialNumber_L2100_REF": claim_ref_values.get("provider_commercial_number", ""),
         "CLM_EmployeeIdentificationNumber_L2100_REF": claim_ref_values.get("employee_identification_number", ""),
         "CLM_InsurancePolicyNumber_L2100_REF": claim_ref_values.get("insurance_policy_number", ""),
         "CLM_PayeeIdentification_L2100_REF": claim_ref_values.get("payee_identification", ""),
@@ -4054,6 +4066,10 @@ def create_output_row(
         "SVC_PriorAuth_L2110_REF": service_ref_values.get("prior_auth", "") if service else "",
         "SVC_ProviderControl_L2110_REF": service_ref_values.get("provider_control", "") if service else "",
         "SVC_LineItemControl_L2110_REF": service_ref_values.get("line_item_control", "") if service else "",
+        "SVC_SubmitterID_L2110_REF": service_ref_values.get("submitter_id", "") if service else "",
+        "SVC_ProviderCommercialNumber_L2110_REF": service_ref_values.get("provider_commercial_number", "")
+        if service
+        else "",
         # Repricing Reference Numbers
         "SVC_RepricedClaimRefNumber_L2110_REF": service_ref_values.get("repriced_claim_ref_number", "")
         if service

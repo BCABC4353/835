@@ -14,7 +14,8 @@
       "Bash(py:*)",
       "Bash(dir:*)",
       "Bash(git rm:*)",
-      "Bash(python get_version.py:*)"
+      "Bash(python get_version.py:*)",
+      "Bash(cd:*)"
     ],
     "deny": [],
     "ask": []
