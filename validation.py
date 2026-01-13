@@ -120,6 +120,7 @@ class ValidationError:
         expected: Any = None,
         actual: Any = None,
         payer_info: Dict = None,
+        edi_context: List[str] = None,
     ):
         self.type = error_type
         self.message = message
@@ -129,6 +130,7 @@ class ValidationError:
         self.expected = expected
         self.actual = actual
         self.payer_info = payer_info or {}
+        self.edi_context = edi_context or []
 
     def __str__(self):
         parts = [f"[{self.type}]"]
@@ -150,6 +152,7 @@ class ValidationError:
             "expected": str(self.expected) if self.expected is not None else None,
             "actual": str(self.actual) if self.actual is not None else None,
             "payer_info": self.payer_info,
+            "edi_context": self.edi_context,
         }
 
 
@@ -1761,6 +1764,21 @@ class ZeroFailValidator:
                                 expected,
                                 diff,
                             )
+                        # Collect EDI context for debugging - BPR, sample CLPs, and PLB segments
+                        edi_context = []
+                        clp_count = 0
+                        for seg in transaction_segments:
+                            seg_id = seg.split(delimiter)[0]
+                            if seg_id == "BPR":
+                                edi_context.append(seg)
+                            elif seg_id == "CLP" and clp_count < 3:
+                                edi_context.append(seg)
+                                clp_count += 1
+                            elif seg_id == "CLP" and clp_count == 3:
+                                edi_context.append(f"... and {len(clp_payments) - 3} more CLP segments")
+                                clp_count += 1
+                            elif seg_id == "PLB":
+                                edi_context.append(seg)
                         self.errors.append(
                             ValidationError(
                                 "CALC",
@@ -1769,6 +1787,7 @@ class ZeroFailValidator:
                                 expected=float(expected),
                                 actual=float(check_total),
                                 payer_info={"name": payer_name, "state": payer_state},
+                                edi_context=edi_context,
                             )
                         )
                     self.stats["calculations_checked"] += 1
@@ -3403,6 +3422,10 @@ def generate_executive_dashboard(validation_result: Dict) -> str:
                     lines.append(f"        Expected: {example['expected']}, Actual: {example['actual']}")
                 else:
                     lines.append(f"      Example: {location}")
+                if example.get("edi_context"):
+                    lines.append("      Source EDI Data:")
+                    for seg in example["edi_context"]:
+                        lines.append(f"        {seg}")
         lines.append("")
     if validation_result.get("missing_mappings"):
         total_gaps = sum(len(codes) for codes in validation_result["missing_mappings"].values())
@@ -3521,6 +3544,10 @@ def generate_text_report(validation_result: Dict, redact: bool = True) -> str:
                     lines.append(f"   Expected: {error['expected']}, Actual: {error['actual']}")
                 if error.get("field"):
                     lines.append(f"   Field: {error['field']}")
+                if error.get("edi_context"):
+                    lines.append("   Source EDI Data:")
+                    for seg in error["edi_context"]:
+                        lines.append(f"      {seg}")
                 lines.append("")
             if len(errors) > 10:
                 lines.append(f"   ... and {len(errors) - 10} more {error_type} errors")
