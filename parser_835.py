@@ -70,6 +70,8 @@ class EDIProcessor:
     def __init__(self):
         self.fair_health_rates = None
         self.trips_by_run = {}  # RUN -> normalized ZIP mapping
+        self.rate_load_error = None  # Stores error message if rate loading fails
+        self.trips_load_error = None  # Stores error message if trips loading fails
 
     def load_fair_health_rates(self, rates_file_path=None):
         """
@@ -93,7 +95,8 @@ class EDIProcessor:
         is_google_sheet = rates.is_google_sheet(rates_file_path)
 
         if not is_google_sheet and not os.path.exists(rates_file_path):
-            logger.info("Fair Health rates file not found: %s (columns will be empty)", rates_file_path)
+            self.rate_load_error = f"Fair Health rates file not found: {rates_file_path}"
+            logger.info("%s (columns will be empty)", self.rate_load_error)
             return False
 
         try:
@@ -103,20 +106,25 @@ class EDIProcessor:
             source_type = stats.get("source", "excel")
             logger.info("Loaded Fair Health rates from %s: %s rate combinations", source_type, stats["rate_keys"])
             logger.debug("  ZIP codes: %s, HCPCS codes: %s", stats["unique_zips"], stats["unique_hcpcs"])
+            self.rate_load_error = None  # Clear any previous error
             return True
         except ImportError as e:
+            self.rate_load_error = f"Missing dependency for Fair Health rates: {e}"
             logger.warning("Failed to load Fair Health rates - missing dependency: %s", e)
             self.fair_health_rates = None
             return False
         except OSError as e:
+            self.rate_load_error = f"File error loading Fair Health rates: {e}"
             logger.warning("Failed to load Fair Health rates - file error: %s", e)
             self.fair_health_rates = None
             return False
         except (KeyError, ValueError) as e:
+            self.rate_load_error = f"Data format error loading Fair Health rates: {e}"
             logger.warning("Failed to load Fair Health rates - data format error: %s", e)
             self.fair_health_rates = None
             return False
         except Exception as e:
+            self.rate_load_error = f"Failed to load Fair Health rates: {e}"
             logger.warning("Failed to load Fair Health rates: %s", e)
             self.fair_health_rates = None
             return False
@@ -5370,6 +5378,20 @@ def process_folder(folder_path, enable_redaction=False, status_callback=None):
                 status_callback=status_callback,
                 payer_keys=payer_keys_map,  # Pass payer keys for validation overrides
             )
+
+            # Add data loading errors to validation result (if any)
+            processor = _get_processor()
+            data_load_issues = []
+            if processor.rate_load_error:
+                data_load_issues.append(
+                    {"type": "RATE_LOAD", "message": processor.rate_load_error, "severity": "WARNING"}
+                )
+            if processor.trips_load_error:
+                data_load_issues.append(
+                    {"type": "TRIPS_LOAD", "message": processor.trips_load_error, "severity": "WARNING"}
+                )
+            if data_load_issues:
+                validation_result["data_load_issues"] = data_load_issues
 
             # Also generate HTML report
             if status_callback:

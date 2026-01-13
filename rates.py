@@ -53,6 +53,11 @@ def read_gsheet_file(filepath: str) -> Optional[str]:
     .gsheet files are created by Google Drive for Desktop and contain
     JSON with a 'url' field pointing to the actual Google Sheet.
 
+    Handles various scenarios:
+    - Standard JSON format with 'url' field
+    - Cloud placeholder files from Google Drive
+    - Different text encodings
+
     Args:
         filepath: Path to the .gsheet file
 
@@ -60,25 +65,85 @@ def read_gsheet_file(filepath: str) -> Optional[str]:
         The Google Sheet URL or None if not found
     """
     import json as json_module
+    import os
 
+    # First check if file exists
+    if not os.path.exists(filepath):
+        logger.error("Google Sheet file not found: %s", filepath)
+        return None
+
+    content = None
+
+    # Try reading in binary mode first, then decode
+    # This handles Google Drive placeholder files better
     try:
-        with open(filepath, encoding="utf-8") as f:
-            content = f.read().strip()
-            # Try to parse as JSON
+        with open(filepath, "rb") as f:
+            raw_bytes = f.read()
+
+        # Try different encodings
+        for encoding in ["utf-8", "utf-8-sig", "utf-16", "latin-1"]:
             try:
-                data = json_module.loads(content)
-                if isinstance(data, dict) and "url" in data:
-                    return data["url"]
-            except json_module.JSONDecodeError:
-                pass
-            # If not JSON, check if the content itself is a URL
-            if "docs.google.com/spreadsheets" in content:
-                # Try to extract URL from content
-                match = _RE_GOOGLE_SHEET_URL.search(content)
-                if match:
-                    return f"https://docs.google.com/spreadsheets/d/{match.group(1)}"
+                content = raw_bytes.decode(encoding).strip()
+                if content:
+                    break
+            except (UnicodeDecodeError, UnicodeError):
+                continue
+
+        if not content:
+            logger.error(
+                "Could not decode .gsheet file with any encoding: %s (size: %d bytes)", filepath, len(raw_bytes)
+            )
+            return None
+
+    except PermissionError as e:
+        logger.error(
+            "Permission denied reading .gsheet file: %s. "
+            "If using Google Drive, ensure the file is available offline or synced.",
+            filepath,
+        )
+        return None
     except OSError as e:
-        logger.warning("Failed to read .gsheet file %s: %s", filepath, e)
+        # Error 22 (Invalid argument) often means Google Drive placeholder file
+        if e.errno == 22:
+            logger.error(
+                "Cannot read .gsheet file: %s. This may be a Google Drive cloud-only file. "
+                "Try right-clicking the file in Google Drive and selecting 'Make available offline', "
+                "or copy the Google Sheet URL directly from your browser.",
+                filepath,
+            )
+        else:
+            logger.error("Failed to read .gsheet file %s: %s", filepath, e)
+        return None
+
+    # Try to parse as JSON
+    try:
+        data = json_module.loads(content)
+        if isinstance(data, dict):
+            # Check for 'url' field (standard format)
+            if "url" in data:
+                return data["url"]
+            # Check for 'doc_id' field (alternate format)
+            if "doc_id" in data:
+                return f"https://docs.google.com/spreadsheets/d/{data['doc_id']}"
+    except json_module.JSONDecodeError:
+        pass
+
+    # If not JSON, check if the content itself contains a URL
+    if "docs.google.com/spreadsheets" in content:
+        match = _RE_GOOGLE_SHEET_URL.search(content)
+        if match:
+            return f"https://docs.google.com/spreadsheets/d/{match.group(1)}"
+
+    # Check for just a sheet ID in the content
+    content_stripped = content.strip()
+    if _RE_GOOGLE_SHEET_ID.match(content_stripped):
+        return f"https://docs.google.com/spreadsheets/d/{content_stripped}"
+
+    logger.error(
+        "Could not find Google Sheet URL in .gsheet file: %s. " "File content (first 200 chars): %s",
+        filepath,
+        content[:200] if content else "(empty)",
+    )
     return None
 
 

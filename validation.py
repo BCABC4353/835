@@ -3371,6 +3371,16 @@ def generate_executive_dashboard(validation_result: Dict) -> str:
     status_symbol = "[PASS]" if status == "PASS" else "[FAIL]"
     lines.append(f"{status_symbol} OVERALL STATUS: {status}")
     lines.append("")
+    # Show data loading issues prominently at the top
+    if validation_result.get("data_load_issues"):
+        lines.append("DATA LOADING ISSUES:")
+        lines.append("-" * 100)
+        for issue in validation_result["data_load_issues"]:
+            severity = issue.get("severity", "WARNING")
+            issue_type = issue.get("type", "UNKNOWN")
+            message = issue.get("message", "Unknown error")
+            lines.append(f"  [{severity}] {issue_type}: {message}")
+        lines.append("")
     lines.append("KEY METRICS:")
     lines.append(f"  Segments Processed: {summary['total_segments']:,}")
     lines.append(f"  Fields Validated: {summary['fields_validated']:,}")
@@ -3529,6 +3539,21 @@ def generate_text_report(validation_result: Dict, redact: bool = True) -> str:
     lines.append(f"Errors Found: {summary['error_count']}")
     lines.append(f"Warnings: {summary['warning_count']}")
     lines.append("")
+    # Show data loading issues
+    if validation_result.get("data_load_issues"):
+        lines.append("-" * 80)
+        lines.append("DATA LOADING ISSUES")
+        lines.append("-" * 80)
+        lines.append("")
+        lines.append("The following issues occurred while loading external data files:")
+        lines.append("")
+        for issue in validation_result["data_load_issues"]:
+            severity = issue.get("severity", "WARNING")
+            issue_type = issue.get("type", "UNKNOWN")
+            message = issue.get("message", "Unknown error")
+            lines.append(f"[{severity}] {issue_type}")
+            lines.append(f"  {message}")
+            lines.append("")
     lines.append("-" * 80)
     if validation_result.get("errors_by_type"):
         lines.append("ERRORS BY TYPE")
@@ -3775,6 +3800,24 @@ def generate_html_report(validation_result: Dict, redact: bool = True) -> str:
         </tr>
 """)
     html_parts.append("    </table>")
+    # Show data loading issues if any
+    if validation_result.get("data_load_issues"):
+        html_parts.append("""
+    <h3 style="color: #856404;">Data Loading Issues</h3>
+    <div style="background-color: #fff3cd; border: 1px solid #ffeaa7; padding: 15px; border-radius: 5px; margin-bottom: 20px;">
+        <p style="margin-top: 0;"><strong>The following issues occurred while loading external data files:</strong></p>
+""")
+        for issue in validation_result["data_load_issues"]:
+            severity = html.escape(issue.get("severity", "WARNING"))
+            issue_type = html.escape(issue.get("type", "UNKNOWN"))
+            message = html.escape(issue.get("message", "Unknown error"))
+            html_parts.append(f"""
+        <div style="margin: 10px 0; padding: 10px; background-color: #ffeaa7; border-radius: 3px;">
+            <strong>[{severity}] {issue_type}</strong><br>
+            <span style="font-family: monospace;">{message}</span>
+        </div>
+""")
+        html_parts.append("    </div>")
     if validation_result.get("warnings"):
         html_parts.append("""
     <h3>Warnings</h3>
