@@ -55,7 +55,7 @@ def read_gsheet_file(filepath: str) -> Optional[str]:
 
     Handles various scenarios:
     - Standard JSON format with 'url' field
-    - Cloud placeholder files from Google Drive
+    - Cloud placeholder files from Google Drive (tries multiple methods)
     - Different text encodings
 
     Args:
@@ -66,6 +66,8 @@ def read_gsheet_file(filepath: str) -> Optional[str]:
     """
     import json as json_module
     import os
+    import subprocess
+    import sys
 
     # First check if file exists
     if not os.path.exists(filepath):
@@ -73,12 +75,13 @@ def read_gsheet_file(filepath: str) -> Optional[str]:
         return None
 
     content = None
+    read_method = None
 
-    # Try reading in binary mode first, then decode
-    # This handles Google Drive placeholder files better
+    # Method 1: Try standard binary read
     try:
         with open(filepath, "rb") as f:
             raw_bytes = f.read()
+        read_method = "binary"
 
         # Try different encodings
         for encoding in ["utf-8", "utf-8-sig", "utf-16", "latin-1"]:
@@ -89,31 +92,72 @@ def read_gsheet_file(filepath: str) -> Optional[str]:
             except (UnicodeDecodeError, UnicodeError):
                 continue
 
-        if not content:
-            logger.error(
-                "Could not decode .gsheet file with any encoding: %s (size: %d bytes)", filepath, len(raw_bytes)
-            )
-            return None
+    except PermissionError:
+        logger.warning("Permission denied reading .gsheet file directly: %s", filepath)
+    except OSError as e:
+        if e.errno == 22:
+            logger.warning("Cannot read .gsheet file directly (errno 22): %s - trying alternative methods", filepath)
+        else:
+            logger.warning("OSError reading .gsheet file: %s - %s", filepath, e)
 
-    except PermissionError as e:
+    # Method 2: On Windows, try using 'type' command via subprocess
+    # This sometimes works with Google Drive cloud files
+    if not content and sys.platform == "win32":
+        try:
+            result = subprocess.run(
+                ["cmd", "/c", "type", filepath],
+                capture_output=True,
+                timeout=10,
+                check=False,
+            )
+            if result.returncode == 0 and result.stdout:
+                for encoding in ["utf-8", "utf-8-sig", "cp1252", "latin-1"]:
+                    try:
+                        content = result.stdout.decode(encoding).strip()
+                        if content:
+                            read_method = "subprocess-type"
+                            break
+                    except (UnicodeDecodeError, UnicodeError):
+                        continue
+        except (subprocess.TimeoutExpired, FileNotFoundError, OSError) as e:
+            logger.warning("Subprocess 'type' command failed: %s", e)
+
+    # Method 3: Try PowerShell Get-Content (sometimes works with cloud files)
+    if not content and sys.platform == "win32":
+        try:
+            result = subprocess.run(
+                ["powershell", "-Command", f"Get-Content -Path '{filepath}' -Raw"],
+                capture_output=True,
+                timeout=10,
+                check=False,
+            )
+            if result.returncode == 0 and result.stdout:
+                for encoding in ["utf-8", "utf-8-sig", "utf-16", "latin-1"]:
+                    try:
+                        content = result.stdout.decode(encoding).strip()
+                        if content:
+                            read_method = "powershell"
+                            break
+                    except (UnicodeDecodeError, UnicodeError):
+                        continue
+        except (subprocess.TimeoutExpired, FileNotFoundError, OSError) as e:
+            logger.warning("PowerShell Get-Content failed: %s", e)
+
+    # If we still have no content, provide detailed error
+    if not content:
         logger.error(
-            "Permission denied reading .gsheet file: %s. "
-            "If using Google Drive, ensure the file is available offline or synced.",
+            "Cannot read .gsheet file: %s\n"
+            "This is likely a Google Drive cloud-only placeholder file.\n\n"
+            "SOLUTIONS:\n"
+            "  1. In Google Drive folder, right-click the file and select 'Make available offline'\n"
+            "  2. Or open the Google Sheet in your browser, copy the URL from the address bar,\n"
+            "     and paste it directly into the RATES field in Settings\n"
+            "  3. Or export the Google Sheet to Excel (.xlsx) and use the local file",
             filepath,
         )
         return None
-    except OSError as e:
-        # Error 22 (Invalid argument) often means Google Drive placeholder file
-        if e.errno == 22:
-            logger.error(
-                "Cannot read .gsheet file: %s. This may be a Google Drive cloud-only file. "
-                "Try right-clicking the file in Google Drive and selecting 'Make available offline', "
-                "or copy the Google Sheet URL directly from your browser.",
-                filepath,
-            )
-        else:
-            logger.error("Failed to read .gsheet file %s: %s", filepath, e)
-        return None
+
+    logger.debug("Read .gsheet file using method: %s", read_method)
 
     # Try to parse as JSON
     try:
@@ -121,9 +165,11 @@ def read_gsheet_file(filepath: str) -> Optional[str]:
         if isinstance(data, dict):
             # Check for 'url' field (standard format)
             if "url" in data:
+                logger.info("Found Google Sheet URL in .gsheet file")
                 return data["url"]
             # Check for 'doc_id' field (alternate format)
             if "doc_id" in data:
+                logger.info("Found Google Sheet doc_id in .gsheet file")
                 return f"https://docs.google.com/spreadsheets/d/{data['doc_id']}"
     except json_module.JSONDecodeError:
         pass
@@ -132,15 +178,20 @@ def read_gsheet_file(filepath: str) -> Optional[str]:
     if "docs.google.com/spreadsheets" in content:
         match = _RE_GOOGLE_SHEET_URL.search(content)
         if match:
+            logger.info("Extracted Google Sheet URL from .gsheet file content")
             return f"https://docs.google.com/spreadsheets/d/{match.group(1)}"
 
     # Check for just a sheet ID in the content
     content_stripped = content.strip()
     if _RE_GOOGLE_SHEET_ID.match(content_stripped):
+        logger.info("Found Google Sheet ID in .gsheet file")
         return f"https://docs.google.com/spreadsheets/d/{content_stripped}"
 
     logger.error(
-        "Could not find Google Sheet URL in .gsheet file: %s. " "File content (first 200 chars): %s",
+        "Could not find Google Sheet URL in .gsheet file: %s\n"
+        "File content (first 200 chars): %s\n\n"
+        "The file was readable but doesn't contain a valid Google Sheet reference.\n"
+        "Try copying the URL directly from your browser instead.",
         filepath,
         content[:200] if content else "(empty)",
     )

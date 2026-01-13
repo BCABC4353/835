@@ -831,6 +831,306 @@ class ZeroFailValidator:
                 return tolerance
         return Decimal("0.01")
 
+    def _build_transaction_balance_context(
+        self,
+        transaction_segments: List[str],
+        delimiter: str,
+        check_total: Decimal,
+        clp_payments: List[Decimal],
+        plb_total: Decimal,
+        expected: Decimal,
+        diff: Decimal,
+    ) -> List[str]:
+        """
+        Build comprehensive debugging context for transaction balance errors.
+
+        Returns a list of formatted strings showing:
+        - Calculation breakdown with formula
+        - All BPR segments with parsed amounts
+        - All PLB segments with parsed adjustment details
+        - CLP summary with statistics and samples
+        """
+        context = []
+
+        # === CALCULATION BREAKDOWN ===
+        context.append("=" * 60)
+        context.append("CALCULATION BREAKDOWN")
+        context.append("=" * 60)
+        context.append("")
+        context.append("Formula: BPR02 = Sum(CLP04) - Sum(PLB adjustments)")
+        context.append("")
+
+        clp_sum = sum(clp_payments)
+        context.append(f"  BPR02 (Check Amount):      ${float(check_total):,.2f}")
+        context.append(f"  Sum of CLP04 ({len(clp_payments)} claims): ${float(clp_sum):,.2f}")
+        context.append(f"  Sum of PLB adjustments:    ${float(plb_total):,.2f}")
+        context.append("  ----------------------------------------")
+        context.append(f"  Expected (CLP04 - PLB):    ${float(expected):,.2f}")
+        context.append(f"  Actual (BPR02):            ${float(check_total):,.2f}")
+        context.append(f"  DIFFERENCE:                ${float(diff):,.2f}")
+        context.append("")
+
+        # === BPR SEGMENTS ===
+        context.append("=" * 60)
+        context.append("BPR SEGMENTS (Check/Payment Information)")
+        context.append("=" * 60)
+        bpr_segments = []
+        for seg in transaction_segments:
+            if seg.split(delimiter)[0] == "BPR":
+                bpr_segments.append(seg)
+                elements = seg.split(delimiter)
+                if len(elements) > 2:
+                    try:
+                        amt = Decimal(str(elements[2]))
+                        context.append(f"  Amount: ${float(amt):,.2f}")
+                    except (ValueError, TypeError):
+                        context.append(f"  Amount: {elements[2]} (parse error)")
+                context.append(f"  Raw: {seg}")
+                context.append("")
+
+        # === PLB SEGMENTS ===
+        context.append("=" * 60)
+        context.append("PLB SEGMENTS (Provider-Level Adjustments)")
+        context.append("=" * 60)
+        plb_segments = []
+        plb_detail_total = Decimal("0")
+        for seg in transaction_segments:
+            if seg.split(delimiter)[0] == "PLB":
+                plb_segments.append(seg)
+                elements = seg.split(delimiter)
+                context.append(f"  Raw: {seg}")
+                context.append(f"  Provider ID: {elements[1] if len(elements) > 1 else 'N/A'}")
+                context.append(f"  Fiscal Period: {elements[2] if len(elements) > 2 else 'N/A'}")
+                # Parse adjustment pairs (reason:reference, amount)
+                adj_num = 1
+                for i in range(3, min(len(elements), 15), 2):
+                    reason = elements[i] if i < len(elements) else ""
+                    amount_str = elements[i + 1] if i + 1 < len(elements) else ""
+                    if amount_str:
+                        try:
+                            amt = Decimal(str(amount_str))
+                            plb_detail_total += amt
+                            context.append(f"    Adjustment {adj_num}: ${float(amt):,.2f} ({reason})")
+                        except (ValueError, TypeError):
+                            context.append(f"    Adjustment {adj_num}: {amount_str} ({reason}) - PARSE ERROR")
+                        adj_num += 1
+                context.append("")
+
+        if not plb_segments:
+            context.append("  (No PLB segments in this transaction)")
+            context.append("")
+
+        if plb_segments:
+            context.append(f"  PLB TOTAL: ${float(plb_detail_total):,.2f}")
+            if plb_detail_total != plb_total:
+                context.append(f"  WARNING: Parsed total differs from calculated total (${float(plb_total):,.2f})")
+            context.append("")
+
+        # === CLP SUMMARY ===
+        context.append("=" * 60)
+        context.append("CLP SEGMENTS (Claim Payment Summary)")
+        context.append("=" * 60)
+        context.append(f"  Total Claims: {len(clp_payments)}")
+        if clp_payments:
+            context.append(f"  Sum of Payments: ${float(clp_sum):,.2f}")
+            context.append(f"  Min Payment: ${float(min(clp_payments)):,.2f}")
+            context.append(f"  Max Payment: ${float(max(clp_payments)):,.2f}")
+            context.append(f"  Avg Payment: ${float(clp_sum / len(clp_payments)):,.2f}")
+            context.append("")
+
+            # Show breakdown by payment sign (positive, negative, zero)
+            positive = [p for p in clp_payments if p > 0]
+            negative = [p for p in clp_payments if p < 0]
+            zero = [p for p in clp_payments if p == 0]
+            context.append("  Payment Distribution:")
+            context.append(f"    Positive payments: {len(positive)} (${float(sum(positive)):,.2f})")
+            context.append(f"    Negative payments: {len(negative)} (${float(sum(negative)):,.2f})")
+            context.append(f"    Zero payments: {len(zero)}")
+            context.append("")
+
+        # === CLP SAMPLES ===
+        context.append("=" * 60)
+        context.append("CLP SEGMENT SAMPLES (First 10 claims)")
+        context.append("=" * 60)
+        clp_count = 0
+        for seg in transaction_segments:
+            elements = seg.split(delimiter)
+            if elements[0] == "CLP":
+                clp_count += 1
+                if clp_count <= 10:
+                    claim_id = elements[1] if len(elements) > 1 else "N/A"
+                    status = elements[2] if len(elements) > 2 else "N/A"
+                    charge = elements[3] if len(elements) > 3 else "N/A"
+                    payment = elements[4] if len(elements) > 4 else "N/A"
+                    context.append(f"  {clp_count}. Claim: {claim_id}")
+                    context.append(f"     Status: {status}, Charge: ${charge}, Payment: ${payment}")
+                    context.append(f"     Raw: {seg[:100]}{'...' if len(seg) > 100 else ''}")
+                    context.append("")
+
+        if clp_count > 10:
+            context.append(f"  ... and {clp_count - 10} more CLP segments")
+            context.append("")
+
+        # === ANALYSIS ===
+        context.append("=" * 60)
+        context.append("ANALYSIS")
+        context.append("=" * 60)
+        context.append("")
+        context.append("Possible causes of the discrepancy:")
+        context.append("  1. Missing or extra CLP segments in the file")
+        context.append("  2. PLB adjustments not fully captured")
+        context.append("  3. Payer data error in the original 835 file")
+        context.append("  4. Multiple BPR segments with amounts not summed correctly")
+        context.append("")
+
+        return context
+
+    def _build_claim_balance_context(
+        self,
+        claim_id: str,
+        claim_row: dict,
+        all_rows: List[dict],
+        claim_charge: Decimal,
+        claim_payment: Decimal,
+        claim_adj_total: Decimal,
+        expected: Decimal,
+    ) -> List[str]:
+        """
+        Build comprehensive debugging context for claim balance errors.
+
+        Returns a list of formatted strings showing:
+        - Calculation breakdown with formula
+        - Claim-level CAS adjustments
+        - Service line details with their adjustments
+        """
+        context = []
+        diff = abs(claim_payment - expected)
+
+        # === CALCULATION BREAKDOWN ===
+        context.append("=" * 60)
+        context.append("CLAIM BALANCE CALCULATION BREAKDOWN")
+        context.append("=" * 60)
+        context.append("")
+        context.append(f"Claim ID: {claim_id}")
+        context.append("")
+        context.append("Formula: CLP03 (Charge) - CAS Adjustments = CLP04 (Payment)")
+        context.append("")
+
+        context.append(f"  CLP03 (Charge Amount):     ${float(claim_charge):,.2f}")
+        context.append(f"  Total CAS Adjustments:     ${float(claim_adj_total):,.2f}")
+        context.append("  ----------------------------------------")
+        context.append(f"  Expected Payment:          ${float(expected):,.2f}")
+        context.append(f"  CLP04 (Actual Payment):    ${float(claim_payment):,.2f}")
+        context.append(f"  DIFFERENCE:                ${float(diff):,.2f}")
+        context.append("")
+
+        # === CLAIM-LEVEL CAS ADJUSTMENTS ===
+        context.append("=" * 60)
+        context.append("CLAIM-LEVEL CAS ADJUSTMENTS")
+        context.append("=" * 60)
+        claim_level_adj_total = Decimal("0")
+        has_claim_cas = False
+        for cas_idx in range(1, 6):
+            group_field = f"CLM_CAS{cas_idx}_Group_L2100_CAS"
+            reason_field = f"CLM_CAS{cas_idx}_Reason_L2100_CAS"
+            amount_field = f"CLM_CAS{cas_idx}_Amount_L2100_CAS"
+            group = claim_row.get(group_field, "")
+            reason = claim_row.get(reason_field, "")
+            amount_str = claim_row.get(amount_field, "")
+            if amount_str:
+                has_claim_cas = True
+                try:
+                    amount = self._parse_currency_decimal(amount_str)
+                    claim_level_adj_total += amount
+                    context.append(f"  CAS {cas_idx}: ${float(amount):,.2f}")
+                    context.append(f"    Group: {group}, Reason: {reason}")
+                except (ValueError, TypeError):
+                    context.append(f"  CAS {cas_idx}: {amount_str} (parse error)")
+                    context.append(f"    Group: {group}, Reason: {reason}")
+        if not has_claim_cas:
+            context.append("  (No claim-level CAS adjustments)")
+        else:
+            context.append("  ----------------------------------------")
+            context.append(f"  Claim-Level CAS Total: ${float(claim_level_adj_total):,.2f}")
+        context.append("")
+
+        # === SERVICE LINE DETAILS ===
+        context.append("=" * 60)
+        context.append("SERVICE LINE DETAILS")
+        context.append("=" * 60)
+        service_rows = [r for r in all_rows if r.get("SVC_ChargeAmount_L2110_SVC")]
+        if not service_rows:
+            context.append("  (No service lines for this claim)")
+        else:
+            context.append(f"  Total Service Lines: {len(service_rows)}")
+            context.append("")
+            svc_adj_total = Decimal("0")
+            for svc_idx, svc_row in enumerate(service_rows, 1):
+                svc_proc = svc_row.get("SVC_Procedure_L2110_SVC", "N/A")
+                svc_charge = svc_row.get("SVC_ChargeAmount_L2110_SVC", "0")
+                svc_payment = svc_row.get("SVC_PaymentAmount_L2110_SVC", "0")
+                svc_units = svc_row.get("SVC_Units_L2110_SVC", "")
+                context.append(f"  Service {svc_idx}: {svc_proc}")
+                context.append(f"    Charge: ${svc_charge}, Payment: ${svc_payment}, Units: {svc_units}")
+
+                # Service-level CAS adjustments
+                svc_line_adj = Decimal("0")
+                svc_cas_parts = []
+                for cas_idx in range(1, 6):
+                    cas_amount_field = f"SVC_CAS{cas_idx}_Amount_L2110_CAS"
+                    cas_group_field = f"SVC_CAS{cas_idx}_Group_L2110_CAS"
+                    cas_reason_field = f"SVC_CAS{cas_idx}_Reason_L2110_CAS"
+                    cas_amt = svc_row.get(cas_amount_field, "")
+                    if cas_amt:
+                        try:
+                            amt = self._parse_currency_decimal(cas_amt)
+                            svc_line_adj += amt
+                            svc_adj_total += amt
+                            group = svc_row.get(cas_group_field, "")
+                            reason = svc_row.get(cas_reason_field, "")
+                            svc_cas_parts.append(f"${float(amt):,.2f} ({group}/{reason})")
+                        except (ValueError, TypeError):
+                            svc_cas_parts.append(f"{cas_amt} (parse error)")
+                if svc_cas_parts:
+                    context.append(f"    CAS Adjustments: {', '.join(svc_cas_parts)}")
+                context.append("")
+
+            context.append(f"  Service-Level CAS Total: ${float(svc_adj_total):,.2f}")
+            context.append("")
+
+        # === RECONCILIATION ===
+        context.append("=" * 60)
+        context.append("ADJUSTMENT RECONCILIATION")
+        context.append("=" * 60)
+        service_rows = [r for r in all_rows if r.get("SVC_ChargeAmount_L2110_SVC")]
+        recalc_svc_adj = Decimal("0")
+        for svc_row in service_rows:
+            for cas_idx in range(1, 6):
+                cas_amt = svc_row.get(f"SVC_CAS{cas_idx}_Amount_L2110_CAS", "")
+                if cas_amt:
+                    try:
+                        recalc_svc_adj += self._parse_currency_decimal(cas_amt)
+                    except (ValueError, TypeError):
+                        pass
+        context.append(f"  Claim-Level CAS:   ${float(claim_level_adj_total):,.2f}")
+        context.append(f"  Service-Level CAS: ${float(recalc_svc_adj):,.2f}")
+        context.append("  ----------------------------------------")
+        context.append(f"  Total Adjustments: ${float(claim_level_adj_total + recalc_svc_adj):,.2f}")
+        context.append(f"  (Reported Total:   ${float(claim_adj_total):,.2f})")
+        context.append("")
+
+        # === RAW DATA ===
+        context.append("=" * 60)
+        context.append("RAW CSV DATA (Key Fields)")
+        context.append("=" * 60)
+        context.append(f"  Payer: {claim_row.get('Payer_Name_L1000A_N1', 'N/A')}")
+        context.append(f"  Claim Status: {claim_row.get('CLM_Status_L2100_CLP', 'N/A')}")
+        context.append(f"  Patient Name: {claim_row.get('Patient_Name_L2100_NM1', 'N/A')}")
+        context.append(f"  Service Date: {claim_row.get('CLM_ServiceStartDate_L2100_DTM', 'N/A')}")
+        context.append("")
+
+        return context
+
     def _get_payer_key_for_file(self, file_idx: int) -> str:
         """Get the payer key for a given file index."""
         return self.payer_keys.get(file_idx)
@@ -1764,21 +2064,16 @@ class ZeroFailValidator:
                                 expected,
                                 diff,
                             )
-                        # Collect EDI context for debugging - BPR, sample CLPs, and PLB segments
-                        edi_context = []
-                        clp_count = 0
-                        for seg in transaction_segments:
-                            seg_id = seg.split(delimiter)[0]
-                            if seg_id == "BPR":
-                                edi_context.append(seg)
-                            elif seg_id == "CLP" and clp_count < 3:
-                                edi_context.append(seg)
-                                clp_count += 1
-                            elif seg_id == "CLP" and clp_count == 3:
-                                edi_context.append(f"... and {len(clp_payments) - 3} more CLP segments")
-                                clp_count += 1
-                            elif seg_id == "PLB":
-                                edi_context.append(seg)
+                        # Build comprehensive EDI context for debugging
+                        edi_context = self._build_transaction_balance_context(
+                            transaction_segments,
+                            delimiter,
+                            check_total,
+                            clp_payments,
+                            plb_total,
+                            expected,
+                            diff,
+                        )
                         self.errors.append(
                             ValidationError(
                                 "CALC",
@@ -1920,6 +2215,10 @@ class ZeroFailValidator:
                     expected,
                     abs(claim_payment - expected),
                 )
+            # Build detailed claim balance context
+            edi_context = self._build_claim_balance_context(
+                display_claim_id, claim_row, rows, claim_charge, claim_payment, claim_adj_total, expected
+            )
             self.errors.append(
                 ValidationError(
                     "CALC",
@@ -1928,6 +2227,7 @@ class ZeroFailValidator:
                     expected=float(expected),
                     actual=float(claim_payment),
                     field="CLM_PaymentAmount_L2100_CLP",
+                    edi_context=edi_context,
                 )
             )
         self.stats["calculations_checked"] += 1
@@ -2008,6 +2308,8 @@ class ZeroFailValidator:
                     payment,
                     expected,
                 )
+            # Build detailed service balance context
+            edi_context = self._build_service_balance_context(claim_id, row, charge, payment, adj_total, expected)
             self.errors.append(
                 ValidationError(
                     "CALC",
@@ -2016,9 +2318,93 @@ class ZeroFailValidator:
                     expected=float(expected),
                     actual=float(payment),
                     field="SVC_PaymentAmount_L2110_SVC",
+                    edi_context=edi_context,
                 )
             )
         self.stats["calculations_checked"] += 1
+
+    def _build_service_balance_context(
+        self,
+        claim_id: str,
+        row: dict,
+        charge: Decimal,
+        payment: Decimal,
+        adj_total: Decimal,
+        expected: Decimal,
+    ) -> List[str]:
+        """
+        Build comprehensive debugging context for service balance errors.
+        """
+        context = []
+        diff = abs(payment - expected)
+        proc = row.get("SVC_Procedure_L2110_SVC", "N/A")
+        units = row.get("SVC_Units_L2110_SVC", "N/A")
+
+        # === CALCULATION BREAKDOWN ===
+        context.append("=" * 60)
+        context.append("SERVICE LINE BALANCE CALCULATION BREAKDOWN")
+        context.append("=" * 60)
+        context.append("")
+        context.append(f"Claim ID: {claim_id}")
+        context.append(f"Procedure: {proc}")
+        context.append(f"Units: {units}")
+        context.append("")
+        context.append("Formula: SVC02 (Charge) - CAS Adjustments = SVC03 (Payment)")
+        context.append("")
+
+        context.append(f"  SVC02 (Charge):           ${float(charge):,.2f}")
+        context.append(f"  CAS Adjustments:          ${float(adj_total):,.2f}")
+        context.append("  ----------------------------------------")
+        context.append(f"  Expected Payment:         ${float(expected):,.2f}")
+        context.append(f"  SVC03 (Actual Payment):   ${float(payment):,.2f}")
+        context.append(f"  DIFFERENCE:               ${float(diff):,.2f}")
+        context.append("")
+
+        # === CAS ADJUSTMENTS ===
+        context.append("=" * 60)
+        context.append("SERVICE CAS ADJUSTMENTS")
+        context.append("=" * 60)
+        has_cas = False
+        cas_detail_total = Decimal("0")
+        for cas_idx in range(1, 6):
+            group_field = f"SVC_CAS{cas_idx}_Group_L2110_CAS"
+            reason_field = f"SVC_CAS{cas_idx}_Reason_L2110_CAS"
+            amount_field = f"SVC_CAS{cas_idx}_Amount_L2110_CAS"
+            group = row.get(group_field, "")
+            reason = row.get(reason_field, "")
+            amount_str = row.get(amount_field, "")
+            if amount_str:
+                has_cas = True
+                try:
+                    amount = self._parse_currency_decimal(amount_str)
+                    cas_detail_total += amount
+                    context.append(f"  CAS {cas_idx}: ${float(amount):,.2f}")
+                    context.append(f"    Group: {group}, Reason: {reason}")
+                except (ValueError, TypeError):
+                    context.append(f"  CAS {cas_idx}: {amount_str} (parse error)")
+                    context.append(f"    Group: {group}, Reason: {reason}")
+        if not has_cas:
+            context.append("  (No CAS adjustments for this service line)")
+        else:
+            context.append("  ----------------------------------------")
+            context.append(f"  CAS Total: ${float(cas_detail_total):,.2f}")
+        context.append("")
+
+        # === RAW DATA ===
+        context.append("=" * 60)
+        context.append("RAW CSV DATA (Service Line Fields)")
+        context.append("=" * 60)
+        context.append(f"  Payer: {row.get('Payer_Name_L1000A_N1', 'N/A')}")
+        context.append(f"  Patient: {row.get('Patient_Name_L2100_NM1', 'N/A')}")
+        context.append(f"  Procedure: {row.get('SVC_Procedure_L2110_SVC', 'N/A')}")
+        context.append(f"  Modifier: {row.get('SVC_Modifier_L2110_SVC', 'N/A')}")
+        context.append(f"  Charge: {row.get('SVC_ChargeAmount_L2110_SVC', 'N/A')}")
+        context.append(f"  Payment: {row.get('SVC_PaymentAmount_L2110_SVC', 'N/A')}")
+        context.append(f"  Units: {row.get('SVC_Units_L2110_SVC', 'N/A')}")
+        context.append(f"  Service Date: {row.get('SVC_ServiceStartDate_L2110_DTM', 'N/A')}")
+        context.append("")
+
+        return context
 
     def _validate_completeness(self, edi_data: Dict, csv_rows: List[dict], delimiter_or_files, verbose: bool = False):
         """Layer 2: Validate 100% field coverage"""
@@ -3968,6 +4354,18 @@ def generate_html_report(validation_result: Dict, redact: bool = True) -> str:
 """)
             if error.get("location"):
                 html_parts.append(f"Location: {html.escape(error['location'])}<br><br>")
+            if error.get("expected") is not None and error.get("actual") is not None:
+                html_parts.append(f"Expected: {html.escape(str(error['expected']))}<br>")
+                html_parts.append(f"Actual: {html.escape(str(error['actual']))}<br><br>")
+            # Show detailed EDI context if available
+            if error.get("edi_context"):
+                html_parts.append("<strong>Detailed Analysis:</strong><br>")
+                html_parts.append(
+                    '<pre style="background-color: #f8f9fa; padding: 10px; border-radius: 5px; overflow-x: auto; white-space: pre-wrap;">'
+                )
+                for line in error["edi_context"]:
+                    html_parts.append(html.escape(str(line)) + "\n")
+                html_parts.append("</pre>")
             if context:
                 html_parts.append("Context Data:<br>")
                 for field, value in sorted(context.items()):
