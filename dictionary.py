@@ -379,7 +379,6 @@ def get_ambulance_code_description(code):
         "A0394": "ALS IV Therapy Supplies (Specialized Service)",
         "A0396": "ALS Esophageal Intubation Supplies (Specialized Service)",
         "A0398": "ALS Routine Disposable Supplies",
-        "A0390": "ALS Mileage (Per Mile)",
         "A0800": "Non-Covered Ambulance Service",
         "A0999": "Unlisted Ambulance Service (Requires Documentation)",
         "A0225": "Neonatal Transport, Base Rate (can use UJ modifier for night charge)",
@@ -423,7 +422,11 @@ def get_ambulance_code_description(code):
         "T2047": "Non-emergency transportation; per mile - wheelchair van (mountain area)",
         "T2048": "Non-emergency transportation; per mile - stretcher van (mountain area)",
         "T2049": "Non-emergency transportation; stretcher van, mileage; per mile",
+        # Additional ambulance-related codes (non-duplicates)
         "A0380": "BLS mileage (per mile)",
+        "A0390": "ALS mileage (per mile) - DEPRECATED: replaced by A0425 effective April 2002",
+        "A0421": "Ambulance service, advanced life support, mileage (per mile) - DEPRECATED: see A0425",
+        "A0888": "Noncovered ambulance mileage, per mile (beyond closest appropriate facility)",
         "A0998": "Ambulance response and treatment, no transport",
         "A0128": "[CA] Non-emergency transportation; per mile - ambulance",
         "A0248": "[CA] Non-emergency transport; ambulance ancillary",
@@ -432,7 +435,6 @@ def get_ambulance_code_description(code):
         "A0362": "ALS ambulance supplies, disposable (Payer-Specific/State Medicaid)",
         "A0423": "Ambulance service, Advanced Life Support Level 2 (ALS 2)",
         "A0830": "Ambulance service, air transport, one way (fixed wing)",
-        "A0888": "Noncovered ambulance mileage, per mile (beyond closest appropriate facility)",
         "A0997": "Ambulance response and treatment, no transport (alternative code)",
         "A9999": "Miscellaneous DME supply or accessory, not otherwise classified",
         "66666": "Payer-specific placeholder code (Prospect Medical)",
@@ -570,7 +572,180 @@ def get_ambulance_modifier_description(modifier):
         "CG": "Policy Criteria Applied (Payer-Specific Coverage Determination)",
         # Common lab/test modifier (not ambulance but seen on remits)
         "QW": "CLIA Waived Test",
+        # ============================================================================
+        # Behavioral Health / Mental Health Modifiers (H-Series)
+        # ============================================================================
+        "HE": "Mental health program",
+        "HF": "Substance abuse program",
+        "HG": "Opioid addiction treatment program",
+        "HH": "Integrated mental health/substance abuse program",
+        "HI": "Integrated mental health and intellectual disability/developmental disabilities program",
+        "HJ": "Employee assistance program",
+        "HK": "Specialized mental health programs for high-risk populations",
+        "HL": "Intern",
+        "HN": "Bachelor's degree level",
+        "HO": "Master's degree level",
+        "HP": "Doctoral level",
+        "HQ": "Group setting",
+        "HR": "Family/couple with client present",
+        "HS": "Family/couple without client present",
+        "HT": "Multi-disciplinary team",
+        "HW": "Funded by state mental health agency",
+        "HX": "Funded by county/local agency",
+        "HY": "Funded by juvenile justice agency",
+        "HZ": "Funded by criminal justice agency",
+        # ============================================================================
+        # Indiana Medicaid / State-Specific Modifiers
+        # ============================================================================
+        "HD": "Pregnant/parenting women's program",
+        "RR": "Rental (DME) / From Residence to Residence (transport context)",
+        "TT": "Individualized service provided to more than one patient in same setting",
+        # ============================================================================
+        # T-Series Modifiers (Provider/Setting/Program)
+        # ============================================================================
+        "TA": "Left foot, great toe",
+        "TB": "Drug or biological acquired with 340B drug pricing program discount",
+        "TC": "Technical component",
+        "TH": "Obstetrical treatment/services, prenatal or postpartum",
+        "TJ": "Program group, child and/or adolescent",
+        "TL": "Early intervention/individualized family service plan (IFSP)",
+        "TM": "Individualized education program (IEP)",
+        "TN": "Rural/outside providers' customary service area",
+        "TP": "Medical transport, unloaded vehicle",
+        "TQ": "Basic life support transport by a volunteer ambulance provider",
+        "TR": "School-based IEP services provided outside the public school district",
+        "TS": "Follow-up service",
+        # ============================================================================
+        # U-Series Modifiers (Medicaid Level of Care - State-Defined)
+        # ============================================================================
+        "UK": "Services provided on behalf of client to someone other than client (collateral)",
+        "UL": "[State] Medicaid level of care 14",
+        "UM": "[State] Medicaid level of care 15",
+        "UN": "Two patients served",
+        "UP": "Three patients served",
+        "UQ": "Four patients served",
+        "UR": "Five patients served",
+        "US": "Six or more patients served",
+        "UT": "[State] Medicaid level of care 16",
+        # ============================================================================
+        # S-Series Modifiers (Special Circumstances)
+        # ============================================================================
+        "SA": "Nurse practitioner rendering service in collaboration with a physician",
+        "SB": "Nurse midwife",
+        "SE": "State and/or federally-funded programs/services",
+        "SF": "Second opinion ordered by a PRO (100% reimbursement)",
+        "SG": "Ambulatory surgical center (ASC) facility service",
+        "SL": "State-supplied vaccine",
+        "SU": "Procedure performed in physician's office",
+        "SW": "Services provided by a certified registered nurse anesthetist (CRNA) in a rural area",
+        "SY": "Services provided by a physical therapist assistant",
+        "SZ": "Habilitative services",
+        # ============================================================================
+        # X-Series Modifiers (Distinct Procedural Service - Modifier 59 Alternatives)
+        # ============================================================================
+        "XE": "Separate encounter (distinct service during separate encounter same day)",
+        "XP": "Separate practitioner (distinct service by different practitioner)",
+        "XS": "Separate structure (distinct service on separate organ/structure)",
+        "XU": "Unusual non-overlapping service (does not overlap main service)",
+        # ============================================================================
+        # Common CPT/HCPCS Modifiers (frequently seen on remittances)
+        # ============================================================================
+        "22": "Increased procedural services",
+        "23": "Unusual anesthesia",
+        "24": "Unrelated E/M service during postoperative period",
+        "25": "Significant, separately identifiable E/M service same day",
+        "26": "Professional component",
+        "27": "Multiple outpatient hospital E/M encounters same day",
+        "33": "Preventive services",
+        "47": "Anesthesia by surgeon",
+        "50": "Bilateral procedure",
+        "51": "Multiple procedures",
+        "52": "Reduced services",
+        "53": "Discontinued procedure",
+        "54": "Surgical care only",
+        "55": "Postoperative management only",
+        "56": "Preoperative management only",
+        "57": "Decision for surgery",
+        "58": "Staged or related procedure during postoperative period",
+        "59": "Distinct procedural service",
+        "62": "Two surgeons",
+        "63": "Procedure on infants less than 4 kg",
+        "66": "Surgical team",
+        "73": "Discontinued outpatient procedure prior to anesthesia",
+        "74": "Discontinued outpatient procedure after anesthesia",
+        "78": "Unplanned return to OR for related procedure during postop period",
+        "79": "Unrelated procedure during postoperative period",
+        "80": "Assistant surgeon",
+        "81": "Minimum assistant surgeon",
+        "82": "Assistant surgeon when qualified resident not available",
+        "90": "Reference (outside) laboratory",
+        "91": "Repeat clinical diagnostic laboratory test",
+        "92": "Alternative laboratory platform testing",
+        "95": "Synchronous telemedicine service via real-time interactive audio/video",
+        "96": "Habilitative services",
+        "97": "Rehabilitative services",
+        # ============================================================================
+        # Laterality Modifiers
+        # ============================================================================
+        "LT": "Left side",
+        "RT": "Right side",
+        "E1": "Upper left, eyelid",
+        "E2": "Lower left, eyelid",
+        "E3": "Upper right, eyelid",
+        "E4": "Lower right, eyelid",
+        "FA": "Left hand, thumb",
+        "F1": "Left hand, second digit",
+        "F2": "Left hand, third digit",
+        "F4": "Left hand, fifth digit",
+        "F5": "Right hand, thumb",
+        "F6": "Right hand, second digit",
+        "F7": "Right hand, third digit",
+        "F8": "Right hand, fourth digit",
+        "F9": "Right hand, fifth digit",
+        "LC": "Left circumflex coronary artery",
+        "LD": "Left anterior descending coronary artery",
+        "RC": "Right coronary artery",
+        "RI": "Ramus intermedius coronary artery",
+        # ============================================================================
+        # Program/Plan Modifiers
+        # ============================================================================
+        "FP": "Service provided as part of family planning program",
+        "FQ": "Service furnished using audio-only communication technology",
+        "FR": "Supervised clinical experience for social work students",
+        "FS": "Split or shared E/M visit",
+        "FT": "Unrelated E/M visit during postoperative period (CPT 99024)",
+        "FX": "X-ray taken using film",
+        "FY": "X-ray taken using computed radiography/digital radiography",
+        # ============================================================================
+        # Additional Q-Series Modifiers
+        # ============================================================================
+        "Q0": "Investigational clinical service in clinical research study (Category B device)",
+        "Q1": "Routine clinical service in clinical research study",
+        "Q2": "Demonstration procedure/service",
+        "Q3": "Live kidney donor surgery and related services",
+        "Q4": "Service for ordering/referring physician qualifies as HPSA",
+        "Q7": "One class A finding",
+        "Q8": "Two class B findings",
+        "Q9": "One class B and two class C findings",
+        "QJ": "Services/items provided to prisoner in state or local custody",
+        "QK": "Medical direction of 2-4 concurrent anesthesia procedures",
+        "QP": "Documentation in medical record patient condition not improved/sustained",
+        "QR": "Repeat laboratory test on same day",
+        "QS": "Monitored anesthesia care service",
+        "QT": "Recording and storage in EHR transmitted to qualified registry",
+        "QX": "CRNA service with medical direction by physician",
+        "QY": "Medical direction of one CRNA by anesthesiologist",
+        "QZ": "CRNA service without medical direction by physician",
     }
+    # Check institutional modifiers FIRST (before origin-destination combinations)
+    # This ensures modifiers like HD, XE, etc. get their proper descriptions
+    # rather than being incorrectly interpreted as origin->destination codes
+    if modifier in institutional_modifiers:
+        return institutional_modifiers[modifier]
+
+    # Then check for origin-destination combinations (e.g., HR = Hospital to Residence)
+    # Only interpret as origin-destination if BOTH characters are valid origin/dest codes
+    # AND the modifier is not already defined in institutional_modifiers
     if len(modifier) == 2:
         first = modifier[0]
         second = modifier[1]
@@ -578,8 +753,7 @@ def get_ambulance_modifier_description(modifier):
             origin = origin_dest_codes[first].split("(")[0].strip()
             destination = origin_dest_codes[second].split("(")[0].strip()
             return f"Transport from {origin} to {destination}"
-    if modifier in institutional_modifiers:
-        return institutional_modifiers[modifier]
+
     return modifier
 
 
@@ -587,6 +761,7 @@ def get_ambulance_service_level_name(code):
     if not code:
         return ""
     service_levels = {
+        # Base rates
         "A0426": "ALS1 (Non-Emergency)",
         "A0427": "ALS1 (Emergency)",
         "A0428": "BLS (Non-Emergency)",
@@ -596,14 +771,28 @@ def get_ambulance_service_level_name(code):
         "A0434": "SCT (Specialty Care)",
         "A0430": "Fixed Wing Air",
         "A0431": "Rotary Wing Air",
+        # Mileage
+        "A0380": "BLS Mileage",
+        "A0390": "ALS Mileage",
         "A0425": "Ground Mileage",
         "A0435": "Fixed Wing Mileage",
         "A0436": "Rotary Wing Mileage",
+        "A0888": "Noncovered Mileage (Beyond Closest Facility)",
+        # Supplies
         "A0382": "BLS Routine Disposable Supplies",
-        "A0422": "Ambulance Oxygen & Oxygen Supplies",
-        "A0424": "Extra Ambulance Attendant",
+        "A0384": "BLS Defibrillation Supplies",
+        "A0392": "ALS Defibrillation Supplies",
+        "A0394": "ALS IV Drug Therapy Supplies",
         "A0396": "ALS Esophageal Intubation Supplies",
         "A0398": "ALS Routine Disposable Supplies",
+        "A0422": "Ambulance Oxygen & Oxygen Supplies",
+        # Ancillary
+        "A0420": "Ambulance Waiting Time",
+        "A0421": "ALS Mileage (Deprecated)",
+        "A0424": "Extra Ambulance Attendant",
+        # Special
+        "A0998": "Response and Treatment (No Transport)",
+        "A0999": "Unlisted Ambulance Service",
     }
     return service_levels.get(code, f"Unknown Service Level: {code}")
 
@@ -2073,14 +2262,34 @@ def get_remark_code_description(code):
         "MA156": "Missing/incomplete/invalid date of the patient's last visit with the ordering provider",
         "M830": "Alert: Updates to Medicare enrollment record may be needed.",
         # Additional standard RARCs
+        "N143": "Patient not enrolled in hospice for some or all of the service dates",
+        "N149": "Requested information from another payer not received or not received timely",
+        "N185": "Duplicate claim/service processed; no additional payment",
+        "N205": "Additional information is required from the patient/insured",
         "N206": "Missing/incomplete/invalid documentation of prior authorization",
         "N221": "Missing/incomplete/invalid prior authorization date",
         "N257": "Missing/incomplete/invalid patient health record",
+        "N258": "Missing/incomplete/invalid billing provider/supplier address",
         "N354": "Incomplete/invalid dental claim",
         "N408": "Incomplete/invalid documentation supporting medical necessity",
         "N453": "Missing/incomplete/invalid documentation for this service",
         "N457": "Missing/incomplete/invalid documentation of medical necessity",
+        "N207": "Patient is not liable for payment for this service",
+        "N291": "Missing/incomplete/invalid rendering provider primary identifier",
+        "N887": "Payment adjusted because recipient ineligible for this benefit this month",
         "N904": "This service was processed in accordance with the terms of the payer's contract",
+        # Standard RARCs added from validation report analysis (2025-01)
+        "N142": "Payment denied for service furnished to a patient enrolled in a Hospice",
+        "N255": "Missing/incomplete/invalid certificate of medical necessity",
+        "N292": "Missing/incomplete/invalid date of accident/injury",
+        "N293": "Missing/incomplete/invalid referral number",
+        "N294": "Missing/incomplete/invalid reason for delay in submittal",
+        "N883": "Missing/incomplete/invalid location where service was furnished information",
+        "N891": "Rebill ambulance trip using specific modifiers",
+        # Standard RARCs added from validation report analysis (2026-01)
+        "N209": "Not covered when performed during the same session/date as a previously processed service for the patient",
+        "N489": "Missing referral form",
+        "N888": "Alert: The claim/service has been paid at a reduced rate based on the physician's agreement with the payer",
     }
     return remark_map.get(code, f"Unknown Remark Code: {code}")
 

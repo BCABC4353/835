@@ -44,6 +44,16 @@ desktop.ini
 *.swo
 *~
 
+# Claude Code / MCP
+.claude/
+.mcp.json
+tmpclaude-*
+claude.ps1
+
+# Local utility scripts (not part of main application)
+cleanup_files.ps1
+move_denial_files.ps1
+
 # Distribution
 dist/
 build/

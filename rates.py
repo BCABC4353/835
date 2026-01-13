@@ -19,6 +19,11 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 
 logger = logging.getLogger(__name__)
 
+# Pre-compiled regex patterns for normalization (performance optimization)
+_RE_NON_ALNUM = re.compile(r"[^A-Z0-9]")
+_RE_NON_DIGIT = re.compile(r"[^0-9]")
+_RE_CURRENCY = re.compile(r"[$,]")
+
 try:
     import openpyxl
 except ImportError:
@@ -36,7 +41,7 @@ def normalize_hcpcs(hcpcs: Any) -> Optional[str]:
     if not s or s.lower() in ("undefined", "null", "none", "n/a", ""):
         return None
     # Remove non-alphanumeric characters
-    s = re.sub(r"[^A-Z0-9]", "", s)
+    s = _RE_NON_ALNUM.sub("", s)
     return s if s else None
 
 
@@ -55,7 +60,7 @@ def normalize_zip(zip_code: Any) -> Optional[int]:
     if "-" in s:
         s = s.split("-")[0]
     # Extract first 5 digits
-    digits = re.sub(r"[^0-9]", "", s)
+    digits = _RE_NON_DIGIT.sub("", s)
     if len(digits) >= 5:
         return int(digits[:5])
     elif digits:
@@ -74,7 +79,7 @@ def normalize_rate(rate: Any) -> Union[int, float, None]:
     if not s:
         return None
     # Remove currency symbols first, then check for undefined
-    cleaned = re.sub(r"[$,]", "", s).strip()
+    cleaned = _RE_CURRENCY.sub("", s).strip()
     # Filter out all non-numeric placeholder values
     if not cleaned or cleaned.lower() in ("undefined", "null", "none", "", "n/a", "error"):
         return None
@@ -177,7 +182,10 @@ class FairHealthRates:
         # Collect raw data grouped by (zip, hcpcs)
         raw_data: Dict[Tuple[int, str], List[dict]] = {}
 
-        for row in ws.iter_rows(min_row=2):
+        # Limit column iteration to only the columns we need (avoids reading empty columns)
+        max_col = max(col_map.values()) + 1 if col_map else None
+
+        for row in ws.iter_rows(min_row=2, max_col=max_col):
             self.load_stats["rows_processed"] += 1
 
             values = [cell.value for cell in row]

@@ -16,7 +16,7 @@ import os
 import re
 from collections import defaultdict
 from datetime import datetime
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal, InvalidOperation, Overflow
 from typing import Any, Dict, List
 
 import colloquial
@@ -25,6 +25,86 @@ from categorization import categorize_adjustment
 
 # Configure module logger
 logger = logging.getLogger(__name__)
+
+# Lazy-load DISPLAY_COLUMN_NAMES to avoid circular import with parser_835
+_DISPLAY_TO_INTERNAL = None
+_INTERNAL_TO_DISPLAY = None
+
+
+def _get_display_mappings():
+    """Lazy-load display column mappings to avoid circular import."""
+    global _DISPLAY_TO_INTERNAL, _INTERNAL_TO_DISPLAY
+    if _DISPLAY_TO_INTERNAL is None:
+        from parser_835 import DISPLAY_COLUMN_NAMES
+
+        _DISPLAY_TO_INTERNAL = {v: k for k, v in DISPLAY_COLUMN_NAMES.items()}
+        _INTERNAL_TO_DISPLAY = DISPLAY_COLUMN_NAMES.copy()
+    return _DISPLAY_TO_INTERNAL, _INTERNAL_TO_DISPLAY
+
+
+def get_csv_field(row: dict, internal_name: str, default: Any = "") -> Any:
+    """
+    Get a field from CSV row, trying internal name first then display name.
+
+    The CSV may use either internal field names or display-friendly names
+    (from DISPLAY_COLUMN_NAMES). This helper handles both cases.
+
+    Args:
+        row: CSV row dictionary
+        internal_name: The internal field name (e.g., 'CLM_ChargeAmount_L2100_CLP')
+        default: Default value if field not found
+
+    Returns:
+        Field value or default
+    """
+    # Try internal name first
+    if internal_name in row:
+        return row[internal_name]
+    # Try display name
+    _, internal_to_display = _get_display_mappings()
+    display_name = internal_to_display.get(internal_name)
+    if display_name and display_name in row:
+        return row[display_name]
+    return default
+
+
+def normalize_csv_rows(csv_rows: List[dict]) -> List[dict]:
+    """
+    Normalize CSV rows to use internal field names instead of display names.
+
+    The CSV output uses display-friendly column names (e.g., "CLAIM CHARGE" instead
+    of "CLM_ChargeAmount_L2100_CLP"). This function converts display names back to
+    internal names so validation code can use consistent field names.
+
+    Args:
+        csv_rows: List of CSV row dictionaries with display names
+
+    Returns:
+        List of CSV row dictionaries with internal names
+    """
+    if not csv_rows:
+        return csv_rows
+
+    display_to_internal, _ = _get_display_mappings()
+
+    # Check if normalization is needed (first row has display names)
+    first_row = csv_rows[0]
+    needs_normalization = any(display_name in first_row for display_name in display_to_internal)
+
+    if not needs_normalization:
+        return csv_rows
+
+    # Normalize all rows
+    normalized = []
+    for row in csv_rows:
+        new_row = {}
+        for key, value in row.items():
+            # Convert display name to internal name if mapping exists
+            internal_name = display_to_internal.get(key, key)
+            new_row[internal_name] = value
+        normalized.append(new_row)
+
+    return normalized
 
 
 class ValidationError:
@@ -766,6 +846,62 @@ class ZeroFailValidator:
             return colloquial.is_payer_priority_rarc(payer_key, rarc_code)
         return False
 
+    def _is_field_not_used_for_payer(self, payer_key: str, field_name: str) -> bool:
+        """
+        Check if a field is marked as 'Not Used' for a specific payer.
+
+        Some payers (like Indiana Medicaid/IHCP) explicitly do not populate certain
+        optional fields per their companion guides. This method checks the payer's
+        parsing_rules to determine if missing/empty data for a field should be
+        suppressed from validation warnings.
+
+        Args:
+            payer_key: The payer identifier (e.g., "INDIANA_MEDICAID")
+            field_name: The field name to check (e.g., "SVC_Modifier1_L2110_SVC")
+
+        Returns:
+            True if the field is marked as 'not used' for this payer
+        """
+        if not payer_key:
+            return False
+
+        parsing_rules = colloquial.get_parsing_rules(payer_key)
+        if not parsing_rules:
+            return False
+
+        # Map field names to parsing_rules keys
+        # Indiana Medicaid: SVC01-7 (Procedure Code Description) not used
+        # Indiana Medicaid: SVC06 (Original Procedure Code) not used
+        field_to_rule_map = {
+            # SVC01-7: Procedure Code Description
+            "SVC_CodeDescription_L2110_SVC": "svc01_7_not_used",
+            "SVC_ProcedureCodeDescription_L2110_SVC": "svc01_7_not_used",
+            # SVC06: Original/Adjudicated Procedure Code composite
+            "SVC_OriginalProcedure_L2110_SVC": "svc06_not_used",
+            "SVC_OriginalProcedureCode_L2110_SVC": "svc06_not_used",
+            "SVC_AdjudicatedProcedure_L2110_SVC": "svc06_not_used",
+        }
+
+        rule_key = field_to_rule_map.get(field_name)
+        if rule_key:
+            return parsing_rules.get(rule_key, False)
+
+        return False
+
+    def _get_payer_key_from_name(self, payer_name: str) -> str:
+        """
+        Identify payer key from payer name for validation purposes.
+
+        Args:
+            payer_name: The payer name from N1*PR segment
+
+        Returns:
+            Payer key if identified, None otherwise
+        """
+        if not payer_name:
+            return None
+        return colloquial.identify_payer(payer_name=payer_name)
+
     def _parse_currency(self, value) -> float:
         """Parse a currency string (e.g., '-$1,712.00') to float."""
         if value is None or value == "":
@@ -797,7 +933,7 @@ class ZeroFailValidator:
             return Decimal("0")
         try:
             return Decimal(s)
-        except (ValueError, InvalidOperation):
+        except (ValueError, InvalidOperation, Overflow):
             return Decimal("0")
 
     def _derive_mileage_units(self, proc_code: str, charge_amt: float) -> float:
@@ -1027,6 +1163,10 @@ class ZeroFailValidator:
             "payer_data_quality_issues": defaultdict(lambda: defaultdict(int)),
             "priority_rarc_codes": defaultdict(lambda: defaultdict(int)),
         }
+
+        # Normalize CSV rows to use internal field names (convert display names back)
+        csv_rows = normalize_csv_rows(csv_rows)
+
         update_status("  [1/10] Parsing EDI structure...")
         edi_data = self._parse_edi_data(edi_segments, delimiter)
         update_status("  [2/10] Validating loop structure...")
@@ -1086,6 +1226,9 @@ class ZeroFailValidator:
             "payer_data_quality_issues": defaultdict(lambda: defaultdict(int)),
             "priority_rarc_codes": defaultdict(lambda: defaultdict(int)),
         }
+
+        # Normalize CSV rows to use internal field names (convert display names back)
+        csv_rows = normalize_csv_rows(csv_rows)
 
         update_status("  [1/10] Parsing EDI structure (per-file)...")
         edi_data = self._parse_edi_data_by_file(edi_segments_by_file)
@@ -1550,7 +1693,7 @@ class ZeroFailValidator:
                                 check_total = amount
                             else:
                                 check_total += amount
-                        except (ValueError, TypeError, decimal.InvalidOperation):
+                        except (ValueError, TypeError, decimal.InvalidOperation, decimal.Overflow):
                             logger.warning(
                                 "Invalid BPR check amount in file %s: '%s'", file_name or "unknown", elements[2]
                             )
@@ -1566,7 +1709,7 @@ class ZeroFailValidator:
                         try:
                             payment = Decimal(str(elements[4]))
                             clp_payments.append(payment)
-                        except (ValueError, TypeError, decimal.InvalidOperation):
+                        except (ValueError, TypeError, decimal.InvalidOperation, decimal.Overflow):
                             claim_id = elements[1] if len(elements) > 1 else "unknown"
                             logger.warning(
                                 "Invalid CLP payment amount for claim %s in file %s: '%s'",
@@ -1699,7 +1842,7 @@ class ZeroFailValidator:
             claim_charge = self._parse_currency_decimal(claim_row.get("CLM_ChargeAmount_L2100_CLP", 0))
             claim_payment = self._parse_currency_decimal(claim_row.get("CLM_PaymentAmount_L2100_CLP", 0))
             claim_status = claim_row.get("CLM_Status_L2100_CLP", "")
-        except (ValueError, TypeError, InvalidOperation):
+        except (ValueError, TypeError, InvalidOperation, Overflow):
             return
         if claim_status == "25":
             if claim_payment != 0:
@@ -1792,7 +1935,7 @@ class ZeroFailValidator:
                             field="CLM_ChargeAmount_L2100_CLP",
                         )
                     )
-            except (ValueError, TypeError, decimal.InvalidOperation):
+            except (ValueError, TypeError, decimal.InvalidOperation, decimal.Overflow):
                 pass
             try:
                 if abs(claim_payment - service_payment_total) > Decimal("0.01"):
@@ -1809,7 +1952,7 @@ class ZeroFailValidator:
                             field="CLM_PaymentAmount_L2100_CLP",
                         )
                     )
-            except (ValueError, TypeError, decimal.InvalidOperation):
+            except (ValueError, TypeError, decimal.InvalidOperation, decimal.Overflow):
                 pass
 
     def _validate_service_calculations(self, claim_id: str, row: dict, file_name: str = ""):
@@ -2234,22 +2377,30 @@ class ZeroFailValidator:
             actual_num = Decimal(actual_clean)
             expected_num = Decimal(expected_clean)
             return abs(actual_num - expected_num) <= Decimal("0.01")
-        except (ValueError, InvalidOperation):
+        except (ValueError, InvalidOperation, Overflow):
             pass
 
         # Try date comparison (handles YYYYMMDD, YYMMDD, MM/DD/YY, MM/DD/YYYY)
         def _try_parse_date(value: str):
             if not value:
                 return None
-            date_formats = [
-                "%m/%d/%Y",
-                "%m/%d/%y",
-                "%Y%m%d",
-                "%y%m%d",
-            ]
-            # Support ISO-like with hyphens if present
-            if "-" in value:
-                date_formats.insert(0, "%Y-%m-%d")
+            # Build format list based on value characteristics
+            date_formats = []
+            # Check for slashes (MM/DD/YYYY or MM/DD/YY)
+            if "/" in value:
+                date_formats.extend(["%m/%d/%Y", "%m/%d/%y"])
+            # Check for hyphens (ISO format)
+            elif "-" in value:
+                date_formats.append("%Y-%m-%d")
+            # Pure numeric - check length to determine format
+            elif value.isdigit():
+                if len(value) == 8:
+                    date_formats.append("%Y%m%d")  # YYYYMMDD
+                elif len(value) == 6:
+                    date_formats.append("%y%m%d")  # YYMMDD (X12 ISA09 format)
+            else:
+                # Fallback: try all formats
+                date_formats = ["%m/%d/%Y", "%m/%d/%y", "%Y%m%d", "%y%m%d"]
             for fmt in date_formats:
                 try:
                     return datetime.strptime(value, fmt)
@@ -2296,7 +2447,7 @@ class ZeroFailValidator:
             "CHK_DFI_Qualifier_3_Header_BPR": dictionary.get_dfi_id_number_qualifier_description,
             "CHK_AccountQualifier_3_Header_BPR": dictionary.get_account_number_qualifier_description,
             "Payer_IDQualifier_L1000A_REF": dictionary.get_id_code_qualifier_description,
-            "Provider_IDQualifier_L1000B_REF": dictionary.get_id_code_qualifier_description,
+            "Provider_IDQualifier_L1000B_N1": dictionary.get_id_code_qualifier_description,
         }
         row_level_lookups = {
             "CLM_Status_L2100_CLP": dictionary.get_claim_status_description,
@@ -2462,6 +2613,14 @@ class ZeroFailValidator:
                 if is_gap:
                     sum(payer_counts.values())
                     for payer_key, count in payer_counts.items():
+                        # Check if this field is "not used" for this payer per their companion guide
+                        # payer_key format is "PAYER_NAME|STATE", need to extract payer name
+                        payer_name_from_key = payer_key.split("|")[0] if "|" in payer_key else payer_key
+                        identified_payer = colloquial.identify_payer(payer_name=payer_name_from_key)
+                        if identified_payer and self._is_field_not_used_for_payer(identified_payer, code_field):
+                            # Skip this warning - field is documented as "Not Used" for this payer
+                            continue
+
                         self.stats["missing_mappings"][payer_key].append(
                             {
                                 "field": code_field,
@@ -2509,7 +2668,7 @@ class ZeroFailValidator:
                     clean_value = str(value).replace("$", "").replace(",", "").strip()
                     if clean_value:
                         Decimal(clean_value)
-                except (ValueError, InvalidOperation):
+                except (ValueError, InvalidOperation, Overflow):
                     self.errors.append(
                         ValidationError(
                             "MAPPING",
@@ -2716,7 +2875,7 @@ class ZeroFailValidator:
             ("CLM_FilingIndicator_L2100_CLP", "CLM_FilingIndicatorDesc_L2100_CLP"),
             ("CLM_FrequencyCode_L2100_CLP", "CLM_FrequencyCodeDesc_L2100_CLP"),
             ("Payer_IDQualifier_L1000A_REF", "Payer_IDQualifierDesc_L1000A_REF"),
-            ("Provider_IDQualifier_L1000B_REF", "Provider_IDQualifierDesc_L1000B_REF"),
+            ("Provider_IDQualifier_L1000B_N1", "Provider_IDQualifierDesc_L1000B_N1"),
         ]
         for idx, row in enumerate(csv_rows, 1):
             if verbose and idx % 10000 == 0:

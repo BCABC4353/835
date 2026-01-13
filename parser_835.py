@@ -4,10 +4,11 @@ import os
 import sys
 import traceback
 from collections import defaultdict
-from datetime import datetime
+from datetime import date, datetime
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 
 import colloquial
+import database
 import dictionary
 import rates
 import redactor
@@ -53,8 +54,9 @@ def configure_logging(level=logging.INFO, log_file=None, simple_format=False):
     logger.propagate = False
 
 
-# NOTE: Trips.csv path is now configured via config.py
+# NOTE: Fair Health ZIP CSV path is now configured via config.py
 # Default path can be overridden via config file or environment variable EDI_TRIPS_CSV_PATH
+# This file provides RUN -> ZIP mapping and optionally patient payment amounts
 
 
 class EDIProcessor:
@@ -111,16 +113,20 @@ class EDIProcessor:
             return False
 
     def load_trips_csv(self, trips_csv_path=None):
-        """Load Trips.csv and build RUN -> PU ZIP lookup."""
+        """Load Fair Health ZIP CSV and build RUN -> PU ZIP lookup.
+
+        Supports both old format (RUN, puzip columns) and new format
+        (FAIR HEALTH ZIP[RUN], FAIR HEALTH ZIP[PUZIP] columns).
+        """
         if trips_csv_path is None:
             trips_csv_path = get_config().trips_csv_path
 
         if trips_csv_path is None:
-            logger.info("Trips.csv path not configured")
+            logger.info("Fair Health ZIP CSV path not configured")
             return False
 
         if not os.path.exists(trips_csv_path):
-            logger.info("Trips.csv not found at %s", trips_csv_path)
+            logger.info("Fair Health ZIP CSV not found at %s", trips_csv_path)
             return False
 
         # Clear existing cache to prevent stale data from previous runs
@@ -130,17 +136,25 @@ class EDIProcessor:
             with open(trips_csv_path, encoding="utf-8", errors="replace") as f:
                 reader = csv.DictReader(f)
                 for row in reader:
-                    run = row.get("RUN", "").strip()
-                    puzip = row.get("puzip", "").strip()
+                    # Support both new format (FAIR HEALTH ZIP[...]) and legacy format
+                    run = row.get("FAIR HEALTH ZIP[RUN]", "").strip()
+                    puzip = row.get("FAIR HEALTH ZIP[PUZIP]", "").strip()
+
+                    # Fallback to legacy column names if new format not found
+                    if not run:
+                        run = row.get("RUN", "").strip()
+                    if not puzip:
+                        puzip = row.get("puzip", "").strip()
+
                     if run and puzip:
                         normalized = normalize_zip_code(puzip)
                         if normalized:
                             self.trips_by_run[run] = normalized
         except (OSError, csv.Error) as e:
-            logger.warning("Failed to read Trips.csv at %s: %s", trips_csv_path, e)
+            logger.warning("Failed to read Fair Health ZIP CSV at %s: %s", trips_csv_path, e)
             return False
 
-        logger.info("Loaded %d trip records from Trips.csv", len(self.trips_by_run))
+        logger.info("Loaded %d trip records from Fair Health ZIP CSV", len(self.trips_by_run))
         return True
 
     def get_fair_health_rates_for_service(self, hcpcs_code, service_date_str):
@@ -240,6 +254,8 @@ DISPLAY_COLUMN_NAMES = {
     "Payer_City_L1000A_N4": "PAYOR CITY",
     "Payer_State_L1000A_N4": "PAYOR STATE",
     "Payer_Zip_L1000A_N4": "PAYOR ZIP",
+    "Payer_SubmitterID_L1000A_REF": "PAYER SUBMITTER ID",  # REF*EO
+    "Payer_ProviderCommercialNumber_L1000A_REF": "PAYER PROVIDER COMMERCIAL ID",  # REF*G2
     # Provider Information (L1000B)
     "Provider_Name_L1000B_N1": "COMPANY",
     # Claim Level - CLP Segment (L2100)
@@ -407,7 +423,10 @@ def normalize_zip_code(zip_str):
 
 def load_trips_csv():
     """
-    Load Trips.csv and build RUN -> PU ZIP lookup.
+    Load Fair Health ZIP CSV and build RUN -> PU ZIP lookup.
+
+    Supports both new format (FAIR HEALTH ZIP[RUN], FAIR HEALTH ZIP[PUZIP])
+    and legacy format (RUN, puzip columns).
 
     Delegates to the module-level EDIProcessor instance.
     """
@@ -1367,9 +1386,7 @@ def extract_ref_values(ref_list):
         elif qual == "HPI":
             ref_values["hpid"] = val
 
-    for ref in ref_list:
-        qual = ref.get("qualifier", "")
-        val = ref.get("ref_value", "")
+        # Check for plan type (G1 with specific values) - merged into single loop
         if qual == "G1" and val in ["PPO", "HMO", "EPO", "POS"]:
             ref_values["plan_type"] = val
 
@@ -1753,6 +1770,8 @@ def convert_segments_to_rows(segments, element_delimiter, file_name, component_d
     payer_entity_relationship_desc = ""
     payer_entity_id_secondary = ""
     payer_additional_id = ""
+    payer_submitter_id = ""  # REF*EO at payer loop level
+    payer_provider_commercial_number = ""  # REF*G2 at payer loop level
     business_function_desc = ""
     current_transaction_st_number = ""
     current_transaction_bpr_data = {}
@@ -1796,6 +1815,8 @@ def convert_segments_to_rows(segments, element_delimiter, file_name, component_d
             "contact_bl_info": {},
             "contact_cx_info": {},
             "payer_additional_id": "",
+            "payer_submitter_id": "",  # REF*EO
+            "payer_provider_commercial_number": "",  # REF*G2
             "claims": [],
         }
 
@@ -1979,6 +2000,12 @@ def convert_segments_to_rows(segments, element_delimiter, file_name, component_d
             elif qualifier == "2U":
                 current_transaction["payer_additional_id"] = elements[2]
                 payer_additional_id = elements[2]
+            elif qualifier == "EO":
+                current_transaction["payer_submitter_id"] = elements[2]
+                payer_submitter_id = elements[2]
+            elif qualifier == "G2":
+                current_transaction["payer_provider_commercial_number"] = elements[2]
+                payer_provider_commercial_number = elements[2]
 
         elif seg_id == "PER" and not current_claim:
             contact_function_code = elements[1] if len(elements) > 1 else ""
@@ -2107,6 +2134,8 @@ def convert_segments_to_rows(segments, element_delimiter, file_name, component_d
                         payer_entity_relationship_desc,
                         payer_entity_id_secondary,
                         payer_additional_id,
+                        payer_submitter_id,
+                        payer_provider_commercial_number,
                         contact_bl_function,
                         contact_bl_name,
                         contact_bl_comm1_qualifier,
@@ -2196,6 +2225,8 @@ def convert_segments_to_rows(segments, element_delimiter, file_name, component_d
                         payer_entity_relationship_desc,
                         payer_entity_id_secondary,
                         payer_additional_id,
+                        payer_submitter_id,
+                        payer_provider_commercial_number,
                         contact_bl_function,
                         contact_bl_name,
                         contact_bl_comm1_qualifier,
@@ -2296,6 +2327,10 @@ def convert_segments_to_rows(segments, element_delimiter, file_name, component_d
                 "_transaction_dtm_production_date": current_transaction["dtm_production_date"],
                 "_transaction_trace_number": current_transaction["trace_number"],
                 "_transaction_payer_additional_id": current_transaction["payer_additional_id"],
+                "_transaction_payer_submitter_id": current_transaction["payer_submitter_id"],
+                "_transaction_payer_provider_commercial_number": current_transaction[
+                    "payer_provider_commercial_number"
+                ],
                 "source_file": file_name,  # Track which file this claim came from
             }
 
@@ -2563,6 +2598,8 @@ def convert_segments_to_rows(segments, element_delimiter, file_name, component_d
                     payer_entity_relationship_desc,
                     payer_entity_id_secondary,
                     payer_additional_id,
+                    payer_submitter_id,
+                    payer_provider_commercial_number,
                     contact_bl_function,
                     contact_bl_name,
                     contact_bl_comm1_qualifier,
@@ -2744,6 +2781,8 @@ def convert_segments_to_rows(segments, element_delimiter, file_name, component_d
                     payer_entity_relationship_desc,
                     payer_entity_id_secondary,
                     payer_additional_id,
+                    payer_submitter_id,
+                    payer_provider_commercial_number,
                     contact_bl_function,
                     contact_bl_name,
                     contact_bl_comm1_qualifier,
@@ -2833,6 +2872,8 @@ def convert_segments_to_rows(segments, element_delimiter, file_name, component_d
                     payer_entity_relationship_desc,
                     payer_entity_id_secondary,
                     payer_additional_id,
+                    payer_submitter_id,
+                    payer_provider_commercial_number,
                     contact_bl_function,
                     contact_bl_name,
                     contact_bl_comm1_qualifier,
@@ -2957,6 +2998,8 @@ def convert_segments_to_rows(segments, element_delimiter, file_name, component_d
             payer_entity_relationship_desc,
             payer_entity_id_secondary,
             payer_additional_id,
+            payer_submitter_id,
+            payer_provider_commercial_number,
             contact_bl_function,
             contact_bl_name,
             contact_bl_comm1_qualifier,
@@ -3258,6 +3301,8 @@ def create_output_row(
     payer_entity_relationship_desc,
     payer_entity_id_secondary,
     payer_additional_id,
+    payer_submitter_id,
+    payer_provider_commercial_number,
     contact_bl_function,
     contact_bl_name,
     contact_bl_comm1_qualifier,
@@ -3315,6 +3360,10 @@ def create_output_row(
         trace_number = claim["_transaction_trace_number"]
     if "_transaction_payer_additional_id" in claim:
         payer_additional_id = claim["_transaction_payer_additional_id"]
+    if "_transaction_payer_submitter_id" in claim:
+        payer_submitter_id = claim["_transaction_payer_submitter_id"]
+    if "_transaction_payer_provider_commercial_number" in claim:
+        payer_provider_commercial_number = claim["_transaction_payer_provider_commercial_number"]
 
     subscriber_info = extract_subscriber_info(claim)
     payer_info = extract_payer_info(claim)
@@ -3620,6 +3669,8 @@ def create_output_row(
         ),
         "SecondaryPayer_ID_L1000A_REF": secondary_payer_info.get("SecondaryPayerID", ""),
         "Payer_AdditionalID_L1000A_REF": payer_additional_id,
+        "Payer_SubmitterID_L1000A_REF": payer_submitter_id,  # REF*EO
+        "Payer_ProviderCommercialNumber_L1000A_REF": payer_provider_commercial_number,  # REF*G2
         # Payer RDM fields (L1000A)
         "Payer_ReportTransmissionCode_L1000A_RDM": payer_rdm_data.get("report_transmission_code", ""),
         "Payer_ContactName_L1000A_RDM": payer_rdm_data.get("name", ""),
@@ -3637,6 +3688,9 @@ def create_output_row(
         "Provider_EntityIDCode_L1000B_N1": provider_info.get("ProviderEntityIDCode", ""),
         "Provider_Name_L1000B_N1": provider_info.get("ProviderName", ""),
         "Provider_IDQualifier_L1000B_N1": provider_info.get("ProviderIDQualifier", ""),
+        "Provider_IDQualifierDesc_L1000B_N1": get_id_code_qualifier_description(
+            provider_info.get("ProviderIDQualifier", "")
+        ),
         "Provider_IDCode_L1000B_N1": provider_info.get("ProviderIDCode", ""),
         "Provider_Address_L1000B_N3": provider_info.get("ProviderAddress", ""),
         "Provider_Address2_L1000B_N3": provider_info.get("ProviderAddress2", ""),
@@ -4545,7 +4599,7 @@ def create_output_row(
             text = text.rstrip("0").rstrip(".")
         return text or "0"
 
-    # Get pickup ZIP from Trips.csv using RUN
+    # Get pickup ZIP from Fair Health ZIP CSV using RUN
     processor = _get_processor()
     run_number = format_run_number(claim["claim_number"])
     pickup_zip = processor.trips_by_run.get(run_number)
@@ -4663,7 +4717,7 @@ def create_output_row(
             row["FH_OON_Final"] = ""
             row["FH_IN_Final"] = ""
     else:
-        # No match in Trips.csv or no Fair Health rates loaded - leave empty
+        # No match in Fair Health ZIP CSV or no Fair Health rates loaded - leave empty
         row["FH_OutOfNetwork"] = ""
         row["FH_InNetwork"] = ""
         row["FH_OON_UnitPrice"] = ""
@@ -4700,10 +4754,20 @@ def process_folder(folder_path, enable_redaction=False, status_callback=None):
     if not folder.exists():
         logger.error("Folder does not exist: %s", folder_path)
         return None
+
+    # Determine output folder (configured folder or same as input folder)
+    if config.output_folder:
+        output_base_folder = Path(config.output_folder)
+        # Create output folder if it doesn't exist
+        output_base_folder.mkdir(parents=True, exist_ok=True)
+        logger.info("Using configured output folder: %s", output_base_folder)
+    else:
+        output_base_folder = folder  # Default: same as input folder
+
     testing_folder = None
     if enable_redaction:
         folder_name = folder.name
-        testing_folder = folder.parent / f"{folder_name}_testing"
+        testing_folder = output_base_folder / f"{folder_name}_testing"
         if testing_folder.exists():
             try:
                 shutil.rmtree(testing_folder)
@@ -4711,11 +4775,9 @@ def process_folder(folder_path, enable_redaction=False, status_callback=None):
                 if hasattr(e, "winerror") and e.winerror == 32:
                     logger.warning("Cannot delete existing testing folder (in use by another process)")
                     logger.info("Creating a new folder with timestamp instead...")
-                    # Create a unique folder name with timestamp
-                    from datetime import datetime
-
+                    # Create a unique folder name with timestamp (datetime imported at module level)
                     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                    testing_folder = folder.parent / f"{folder_name}_testing_{timestamp}"
+                    testing_folder = output_base_folder / f"{folder_name}_testing_{timestamp}"
                 else:
                     raise
         testing_folder.mkdir(exist_ok=True)
@@ -4768,13 +4830,13 @@ def process_folder(folder_path, enable_redaction=False, status_callback=None):
     else:
         logger.info("Fair Health rates disabled in config")
 
-    # Load Trips.csv for ZIP lookup (if enabled)
+    # Load Fair Health ZIP CSV for ZIP lookup (if enabled)
     if config.get("enable_trips_lookup", True):
-        logger.info("Loading Trips.csv for ZIP lookup...")
+        logger.info("Loading Fair Health ZIP CSV for ZIP lookup...")
         if not load_trips_csv():
-            logger.info("ZIP lookup from Trips.csv will be unavailable")
+            logger.info("ZIP lookup from Fair Health ZIP CSV will be unavailable")
     else:
-        logger.info("Trips.csv lookup disabled in config")
+        logger.info("Fair Health ZIP lookup disabled in config")
 
     all_rows = []
     # MEMORY OPTIMIZATION: Store only segments+delimiter for validation, not full content
@@ -4787,6 +4849,70 @@ def process_folder(folder_path, enable_redaction=False, status_callback=None):
     # Track EDI element presence across all files to find unmapped elements
     element_tracker = EDIElementPresenceTracker()
 
+    # ============================================================
+    # DATABASE: Filter out already-processed files
+    # ============================================================
+    db = None
+    skipped_files_db = []
+    files_to_process = files  # Default to all files
+
+    if config.enable_database and config.skip_processed_files:
+        try:
+            db = database.get_database(config.database_path)
+            files_to_process = []
+
+            for file_path in files:
+                is_processed, file_info = db.is_file_processed(file_path)
+                if is_processed:
+                    skipped_files_db.append(
+                        {
+                            "file": os.path.basename(file_path),
+                            "processed_at": file_info.get("processed_at", "unknown"),
+                            "record_count": file_info.get("record_count", 0),
+                        }
+                    )
+                    logger.info(
+                        "Skipping %s (already in database, processed %s)",
+                        os.path.basename(file_path),
+                        file_info.get("processed_at", "unknown"),
+                    )
+                else:
+                    files_to_process.append(file_path)
+
+            if skipped_files_db:
+                logger.info("=" * 60)
+                logger.info("Skipped %d file(s) already in database:", len(skipped_files_db))
+                for skip in skipped_files_db:
+                    logger.info(
+                        "  - %s (processed %s, %d records)", skip["file"], skip["processed_at"], skip["record_count"]
+                    )
+                logger.info("=" * 60)
+                if status_callback:
+                    status_callback(f"Skipped {len(skipped_files_db)} file(s) already in database")
+
+            if not files_to_process:
+                logger.info("All files already processed. Nothing new to import.")
+                if status_callback:
+                    status_callback("All files already processed")
+                return None
+
+            files = files_to_process
+            logger.info("Processing %d new file(s) (skipped %d already in database)", len(files), len(skipped_files_db))
+
+        except Exception as db_error:
+            logger.warning("Database check failed, processing all files: %s", str(db_error))
+            # Continue with all files if database check fails
+
+    elif config.enable_database:
+        # Database enabled but skip_processed_files is False - just initialize for later storage
+        try:
+            db = database.get_database(config.database_path)
+        except Exception as db_error:
+            logger.warning("Database initialization failed: %s", str(db_error))
+
+    # Pre-compute file metadata during parse for bulk registration later
+    file_metadata = {}  # filename -> {path, size}
+
     for idx, file_path in enumerate(files, 1):
         file_name = os.path.basename(file_path)
         logger.info("Processing: %s", file_name)
@@ -4795,6 +4921,14 @@ def process_folder(folder_path, enable_redaction=False, status_callback=None):
         try:
             parsed_data = parse_835_file(file_path)
             if parsed_data:
+                # Store file path for later hash computation
+                # NOTE: Hash must be computed from raw bytes (not parsed content) to match
+                # the is_file_processed() check which uses raw file bytes
+                file_metadata[file_name] = {
+                    "path": file_path,
+                    "size": os.path.getsize(file_path),
+                }
+
                 # Store only what's needed for validation (not the full 'content' string)
                 validation_data.append(
                     {
@@ -4877,11 +5011,18 @@ def process_folder(folder_path, enable_redaction=False, status_callback=None):
     if not all_rows:
         logger.warning("No data extracted from any files")
         return None
-    # Get output file name from config (config already loaded at start of function)
+
+    # Generate timestamp for unique CSV filenames (enables Power BI folder append)
+    run_timestamp = datetime.now().strftime("%Y-%m-%d_%H%M%S")
+
+    # Get output file name from config and add timestamp before .csv extension
+    base_name = config.output_csv_name.replace(".csv", "")
+    timestamped_csv_name = f"{base_name}_{run_timestamp}.csv"
+
     if enable_redaction and testing_folder:
-        output_file = testing_folder / config.output_csv_name
+        output_file = testing_folder / timestamped_csv_name
     else:
-        output_file = folder / config.output_csv_name
+        output_file = output_base_folder / timestamped_csv_name
     import csv
 
     # ============================================================
@@ -4899,6 +5040,21 @@ def process_folder(folder_path, enable_redaction=False, status_callback=None):
     current_claim_key = None
     claim_seq = 0
 
+    # PERFORMANCE OPTIMIZATION: Pre-categorize fields ONCE (not per-row)
+    # This eliminates ~500 million is_date_field/is_currency_field pattern matches
+    if all_rows:
+        import re
+
+        from redactor import format_currency, format_date, is_currency_field, is_date_field
+
+        sample_fields = list(all_rows[0].keys())
+        date_fields = {f for f in sample_fields if is_date_field(f)}
+        currency_fields = {f for f in sample_fields if is_currency_field(f)}
+        # Pre-compile patterns for inline normalization
+        whitespace_re = re.compile(r"[\s\t\n\r]+")
+        control_re = re.compile(r"[\x00-\x1f\x7f-\x9f]")
+        logger.info("  Pre-categorized %d date fields, %d currency fields", len(date_fields), len(currency_fields))
+
     for idx, row in enumerate(all_rows, 1):
         # Build unique key from claim number + occurrence
         claim_num = row.get("CLM_PatientControlNumber_L2100_CLP", "")
@@ -4915,16 +5071,60 @@ def process_folder(folder_path, enable_redaction=False, status_callback=None):
         # SEQ format: occurrence-service (e.g., "1-1", "1-2", "2-1")
         row["SEQ"] = f"{occurrence}-{claim_seq}"
 
-        # Normalize all values IN-PLACE: uppercase, strip whitespace, format dates/currency
-        normalized = normalize_csv_row(row)
+        # FAST INLINE NORMALIZATION (avoids function call overhead per field)
+        # Uses pre-categorized field sets for O(1) lookups instead of pattern matching
+        normalized = {}
+        for field, value in row.items():
+            # Skip None/empty early (most common case in 835s)
+            if value is None or value == "":
+                normalized[field] = value
+                continue
+
+            # Date fields - format to MM/DD/YYYY
+            if field in date_fields:
+                if isinstance(value, (datetime, date)):
+                    normalized[field] = value.strftime("%m/%d/%Y")
+                elif isinstance(value, str) and value.strip():
+                    formatted = format_date(value)
+                    normalized[field] = formatted if formatted else value.strip().upper()
+                else:
+                    normalized[field] = value
+                continue
+
+            # Currency fields - format to $X,XXX.XX
+            if field in currency_fields:
+                if isinstance(value, (int, float)):
+                    normalized[field] = format_currency(value)
+                elif isinstance(value, str) and value.strip():
+                    formatted = format_currency(value)
+                    normalized[field] = formatted if formatted else value.strip().upper()
+                else:
+                    normalized[field] = value
+                continue
+
+            # Regular string fields - uppercase, strip, clean
+            if isinstance(value, (int, float)):
+                normalized[field] = value
+            else:
+                text = str(value).strip()
+                if text:
+                    text = text.upper()
+                    text = whitespace_re.sub(" ", text)
+                    text = control_re.sub("", text)
+                normalized[field] = text
+
         if enable_redaction:
             normalized = redact_csv_row(normalized)
 
-        # Replace row contents with normalized values (in-place update)
-        row.clear()
-        row.update(normalized)
+        # OPTIMIZATION: Rename columns to display names ONCE here
+        # This eliminates 3 redundant O(N) rename passes (CSV, compact CSV, DB)
+        display_row = rename_columns_for_display(normalized)
 
-        # Track populated columns (single pass - O(n) instead of O(n*m))
+        # Replace row contents with display-friendly values (in-place update)
+        row.clear()
+        row.update(display_row)
+
+        # Track populated columns using display names (single pass - O(n) instead of O(n*m))
         for field, value in row.items():
             if value is not None and str(value).strip():
                 populated_columns_set.add(field)
@@ -4950,15 +5150,13 @@ def process_folder(folder_path, enable_redaction=False, status_callback=None):
 
     with open(output_file, "w", newline="", encoding="utf-8") as f:
         if normalized_rows:
-            # Get display-friendly column names for CSV header
-            display_fieldnames = [DISPLAY_COLUMN_NAMES.get(k, k) for k in normalized_rows[0].keys()]
-            writer = csv.DictWriter(f, fieldnames=display_fieldnames)
+            # Rows already have display-friendly column names (renamed during normalization)
+            writer = csv.DictWriter(f, fieldnames=list(normalized_rows[0].keys()))
             writer.writeheader()
 
-            # Write pre-normalized rows (no re-processing needed)
+            # Write rows directly - no rename needed (already display names)
             for idx, row in enumerate(normalized_rows, 1):
-                display_row = rename_columns_for_display(row)
-                writer.writerow(display_row)
+                writer.writerow(row)
 
                 # Progress feedback every 10000 rows
                 if idx % 10000 == 0:
@@ -4975,9 +5173,11 @@ def process_folder(folder_path, enable_redaction=False, status_callback=None):
     # ============================================================
 
     if normalized_rows and config.get("enable_compact_csv", True):
+        # Rows already have display-friendly column names
         all_fieldnames = list(normalized_rows[0].keys())
 
         # Filter out ENV and contact columns from compact version
+        # populated_columns_set already contains display names
         compact_excluded_patterns = ["ENV", "contact", "Contact"]
         populated_columns = [
             col
@@ -4989,26 +5189,27 @@ def process_folder(folder_path, enable_redaction=False, status_callback=None):
         # Only create compact file if we actually removed some columns
         removed_count = len(all_fieldnames) - len(populated_columns)
         if removed_count > 0:
+            # Add same timestamp to compact CSV for consistency
+            compact_base_name = config.output_csv_compact_name.replace(".csv", "")
+            timestamped_compact_name = f"{compact_base_name}_{run_timestamp}.csv"
+
             if enable_redaction and testing_folder:
-                compact_file = testing_folder / config.output_csv_compact_name
+                compact_file = testing_folder / timestamped_compact_name
             else:
-                compact_file = folder / config.output_csv_compact_name
+                compact_file = output_base_folder / timestamped_compact_name
 
             logger.info("Generating compact CSV (removed %d empty columns)...", removed_count)
             if status_callback:
                 status_callback(f"Writing compact CSV ({len(populated_columns)} columns)...")
 
-            # Get display-friendly column names for compact CSV
-            display_populated_columns = [DISPLAY_COLUMN_NAMES.get(col, col) for col in populated_columns]
-
             with open(compact_file, "w", newline="", encoding="utf-8") as f:
-                writer = csv.DictWriter(f, fieldnames=display_populated_columns, extrasaction="ignore")
+                # populated_columns already has display names
+                writer = csv.DictWriter(f, fieldnames=populated_columns, extrasaction="ignore")
                 writer.writeheader()
 
-                # Write pre-normalized rows (no re-processing needed!)
+                # Write rows directly - no rename needed (already display names)
                 for idx, row in enumerate(normalized_rows, 1):
-                    display_row = rename_columns_for_display(row)
-                    writer.writerow(display_row)
+                    writer.writerow(row)
 
                     # Progress feedback every 10000 rows
                     if idx % 10000 == 0:
@@ -5029,6 +5230,108 @@ def process_folder(folder_path, enable_redaction=False, status_callback=None):
     elif not config.get("enable_compact_csv", True):
         logger.info("Compact CSV generation disabled in config")
 
+    # ============================================================
+    # DATABASE: Store transactions (append-only)
+    # ============================================================
+    if db is not None and normalized_rows:
+        total_records = len(normalized_rows)
+        if status_callback:
+            status_callback(f"Storing {total_records:,} records in database...")
+        logger.info("Storing %d records in database...", total_records)
+
+        try:
+            # Rows already have display-friendly column names (renamed during normalization)
+            # No need to create a copy - use normalized_rows directly (saves ~50% memory)
+
+            # PERFORMANCE: Register all files FIRST, then batch insert ALL rows together
+            # This changes from 44,037 separate DB operations to ~5 batched operations
+
+            # Group rows by source file for file registration
+            rows_by_file = defaultdict(list)
+            for row in normalized_rows:
+                filename = row.get("Filename_File", "unknown")
+                rows_by_file[filename].append(row)
+
+            # Phase 1: Register all files in SINGLE TRANSACTION (not per-file commits)
+            # Uses pre-computed file_metadata from parsing phase (avoids re-reading 44K files)
+            if status_callback:
+                status_callback(f"Registering {len(rows_by_file):,} files...")
+            logger.info("Registering %d files in database...", len(rows_by_file))
+
+            # Build bulk registration data using pre-computed file_metadata
+            # This eliminates: O(n²) file lookup + 44K DB commits
+            # Note: Hash still computed from raw bytes to match is_file_processed() check
+            files_data = []
+            for filename, file_rows in rows_by_file.items():
+                # O(1) lookup using pre-computed metadata (was O(n) linear scan)
+                metadata = file_metadata.get(filename)
+                if metadata:
+                    icn = file_rows[0].get("ENV_InterchangeControlNumber_Envelope_ISA", "")
+                    # Compute hash from raw bytes (must match is_file_processed check)
+                    file_hash = db.compute_file_hash(metadata["path"])
+                    files_data.append(
+                        {
+                            "filename": filename,
+                            "file_hash": file_hash,
+                            "interchange_control_number": icn,
+                            "file_size_bytes": metadata["size"],
+                            "record_count": len(file_rows),
+                            "source_folder": str(folder),
+                        }
+                    )
+
+            # Progress callback for file registration
+            def file_reg_progress(current, total):
+                if status_callback:
+                    status_callback(f"Registering files: {current:,}/{total:,}...")
+
+            # Single transaction for ALL file registrations (was 44K individual commits)
+            file_id_map = db.register_processed_files_bulk(files_data, progress_callback=file_reg_progress)
+
+            # Phase 2: Add file_id to each row, then batch insert ALL rows together
+            rows_with_file_id = []
+            for row in normalized_rows:
+                filename = row.get("Filename_File", "unknown")
+                file_id = file_id_map.get(filename)  # None if not found (NULL allowed in DB)
+                row["_processed_file_id"] = file_id  # Temp field for insert
+                rows_with_file_id.append(row)
+
+            # Create progress callback wrapper for database insertion
+            def db_progress_callback(current, total):
+                if status_callback:
+                    status_callback(f"Writing to database: {current:,}/{total:,} records...")
+
+            # Single batched insert of ALL rows (not per-file)
+            total_inserted, total_skipped = db.insert_transactions_bulk(
+                rows_with_file_id, progress_callback=db_progress_callback, progress_total=total_records
+            )
+
+            # Clean up temp field
+            for row in normalized_rows:
+                row.pop("_processed_file_id", None)
+
+            logger.info("=" * 60)
+            logger.info("DATABASE STORAGE COMPLETE")
+            logger.info("=" * 60)
+            logger.info("  Records inserted: %d", total_inserted)
+            if total_skipped > 0:
+                logger.info("  Records skipped (duplicates): %d", total_skipped)
+            logger.info("  Database location: %s", db.db_path)
+            logger.info("=" * 60)
+
+            if status_callback:
+                status_callback(f"Database: {total_inserted:,} records stored")
+
+        except Exception as db_error:
+            logger.error("Database storage failed: %s", str(db_error))
+            logger.error("  Error type: %s", type(db_error).__name__)
+            logger.error("  CSV output was still generated successfully")
+            if status_callback:
+                status_callback("Warning: Database storage failed (CSV still saved)")
+
+    elif config.enable_database and not db:
+        logger.warning("Database storage skipped (database not initialized)")
+
     # Run zero-fail validation
     logger.info("Running Zero-Fail Validation...")
     if status_callback:
@@ -5044,8 +5347,8 @@ def process_folder(folder_path, enable_redaction=False, status_callback=None):
                 validation_output = testing_folder / config.validation_report_txt_name
                 validation_html = testing_folder / config.validation_report_html_name
             else:
-                validation_output = folder / config.validation_report_txt_name
-                validation_html = folder / config.validation_report_html_name
+                validation_output = output_base_folder / config.validation_report_txt_name
+                validation_html = output_base_folder / config.validation_report_html_name
 
             # Run validation and generate reports
             validation_result = validate_835_output(

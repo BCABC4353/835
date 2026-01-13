@@ -26,7 +26,7 @@ target-version = "py38"
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "B", "C4", "UP"]
-ignore = ["E501", "B023"]  # E501: Line too long, B023: Lambda captures loop var (false positive when called immediately)
+ignore = ["E501", "B023", "F841", "B007"]  # E501: Line too long, B023: Lambda captures loop var, F841: Unused var, B007: Unused loop var
 
 [tool.black]
 line-length = 120

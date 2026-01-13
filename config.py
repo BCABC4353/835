@@ -29,18 +29,29 @@ class Config:
     # Default configuration values
     DEFAULTS = {
         # Input file paths (None = not configured, user must set via Settings dialog)
+        # trips_csv_path: Fair Health ZIP CSV - provides RUN -> ZIP mapping and patient payments
+        #   Columns: FAIR HEALTH ZIP[RUN], FAIR HEALTH ZIP[PUZIP], FAIR HEALTH ZIP[PT PAID]
+        #   (also supports legacy format: RUN, puzip, AMOUNT)
         "trips_csv_path": None,
-        "rates_xlsx_path": None,
-        # Output file names (relative to processing folder)
+        "rates_xlsx_path": None,  # Fair Health rates by ZIP + HCPCS code
+        # Output file names (relative to output folder)
         "output_csv_name": "835_consolidated_output.csv",
         "output_csv_compact_name": "835_consolidated_output_compact.csv",
         "validation_report_txt_name": "835_validation_report.txt",
         "validation_report_html_name": "835_validation_report.html",
+        # Output folder (None = same folder as input 835 files)
+        "output_folder": None,
         # Processing options
         "enable_fair_health_rates": True,
         "enable_trips_lookup": True,
         "enable_compact_csv": True,
         # Note: Validation is always run automatically (mandatory)
+        # Database configuration
+        "enable_database": True,
+        "database_path": None,  # None = AppData/835-EDI-Parser/edi_transactions.db
+        "skip_processed_files": True,  # Skip files already in database
+        # Deductible report configuration
+        "deductible_report_output_dir": None,  # None = prompt user each time
         # Logging configuration
         "log_level": "INFO",
         "log_file": None,  # None = console only
@@ -123,6 +134,10 @@ class Config:
             "EDI_ENABLE_FAIR_HEALTH": "enable_fair_health_rates",
             "EDI_ENABLE_TRIPS_LOOKUP": "enable_trips_lookup",
             "EDI_ENABLE_COMPACT_CSV": "enable_compact_csv",
+            "EDI_OUTPUT_FOLDER": "output_folder",
+            "EDI_ENABLE_DATABASE": "enable_database",
+            "EDI_DATABASE_PATH": "database_path",
+            "EDI_SKIP_PROCESSED_FILES": "skip_processed_files",
             "EDI_LOG_LEVEL": "log_level",
             "EDI_LOG_FILE": "log_file",
         }
@@ -135,6 +150,8 @@ class Config:
                     "enable_fair_health_rates",
                     "enable_trips_lookup",
                     "enable_compact_csv",
+                    "enable_database",
+                    "skip_processed_files",
                 ]:
                     value = value.lower() in ("true", "1", "yes", "on")
 
@@ -159,7 +176,15 @@ class Config:
 
     @property
     def trips_csv_path(self) -> Optional[str]:
-        """Path to Trips.csv file (None if not configured)"""
+        """Path to Fair Health ZIP CSV file (None if not configured).
+
+        This file provides:
+        - RUN -> ZIP mapping for Fair Health rate lookups
+        - RUN -> Patient Payment amounts for deductible reports
+
+        Supports both new format (FAIR HEALTH ZIP[RUN], FAIR HEALTH ZIP[PUZIP],
+        FAIR HEALTH ZIP[PT PAID]) and legacy format (RUN, puzip, AMOUNT).
+        """
         path = self._config["trips_csv_path"]
         if path:
             return os.path.expanduser(path)
@@ -194,9 +219,43 @@ class Config:
         return self._config["validation_report_html_name"]
 
     @property
+    def output_folder(self) -> Optional[str]:
+        """Output folder for CSV and reports (None = same as input folder)"""
+        path = self._config.get("output_folder")
+        if path:
+            return os.path.expanduser(path)
+        return path
+
+    @property
     def log_file(self) -> Optional[str]:
         """Path to log file (None if not configured)"""
         path = self._config["log_file"]
+        if path:
+            return os.path.expanduser(path)
+        return path
+
+    @property
+    def enable_database(self) -> bool:
+        """Whether to store transactions in SQLite database"""
+        return self._config.get("enable_database", True)
+
+    @property
+    def database_path(self) -> Optional[str]:
+        """Path to SQLite database file (None = use default AppData location)"""
+        path = self._config.get("database_path")
+        if path:
+            return os.path.expanduser(path)
+        return path
+
+    @property
+    def skip_processed_files(self) -> bool:
+        """Whether to skip files already in the database"""
+        return self._config.get("skip_processed_files", True)
+
+    @property
+    def deductible_report_output_dir(self) -> Optional[str]:
+        """Path to deductible report output directory (None = prompt user)"""
+        path = self._config.get("deductible_report_output_dir")
         if path:
             return os.path.expanduser(path)
         return path
@@ -222,12 +281,10 @@ class Config:
         file_path = Path(file_path)
         file_path.parent.mkdir(parents=True, exist_ok=True)
 
-        try:
-            with open(file_path, "w") as f:
-                json.dump(self._config, f, indent=2)
-            logger.info("Saved configuration to: %s", file_path)
-        except Exception as e:
-            logger.error("Error saving config to %s: %s", file_path, e)
+        # Write config to file - raise exceptions so caller knows if it failed
+        with open(file_path, "w", encoding="utf-8") as f:
+            json.dump(self._config, f, indent=2)
+        logger.info("Saved configuration to: %s", file_path)
 
     def _get_default_config_path(self) -> Path:
         """

@@ -62,7 +62,7 @@ class SettingsDialog:
         # Create dialog window
         self.dialog = tk.Toplevel(parent)
         self.dialog.title("Settings")
-        self.dialog.geometry("600x300")
+        self.dialog.geometry("600x480")
         self.dialog.resizable(False, False)
         self.dialog.transient(parent)
         self.dialog.grab_set()
@@ -70,7 +70,7 @@ class SettingsDialog:
         # Center on parent
         self.dialog.update_idletasks()
         x = parent.winfo_x() + (parent.winfo_width() - 600) // 2
-        y = parent.winfo_y() + (parent.winfo_height() - 300) // 2
+        y = parent.winfo_y() + (parent.winfo_height() - 480) // 2
         self.dialog.geometry(f"+{x}+{y}")
 
         self._create_widgets()
@@ -88,25 +88,25 @@ class SettingsDialog:
         # Description
         desc_label = ttk.Label(
             main_frame,
-            text="Set the paths to external data files used for enrichment.\n"
-            "These files are optional - leave blank if not available.",
+            text="Configure file paths and output location.\n"
+            "All settings are optional - leave blank to use defaults.",
             font=("Segoe UI", 9),
             foreground="#666666",
         )
         desc_label.pack(pady=(0, 15))
 
-        # Trips.csv path
+        # Fair Health ZIP CSV path (provides RUN -> ZIP mapping and patient payments)
         trips_frame = ttk.Frame(main_frame)
         trips_frame.pack(fill=tk.X, pady=5)
 
-        ttk.Label(trips_frame, text="Trips.csv:", width=12).pack(side=tk.LEFT)
+        ttk.Label(trips_frame, text="ZIP/Payments:", width=12).pack(side=tk.LEFT)
         self.trips_var = tk.StringVar(value=self.config.get("trips_csv_path") or "")
         trips_entry = ttk.Entry(trips_frame, textvariable=self.trips_var, width=50)
         trips_entry.pack(side=tk.LEFT, padx=5)
         ttk.Button(
             trips_frame,
             text="Browse...",
-            command=lambda: self._browse_file(self.trips_var, "Trips.csv", [("CSV files", "*.csv")]),
+            command=lambda: self._browse_file(self.trips_var, "Fair Health ZIP CSV", [("CSV files", "*.csv")]),
         ).pack(side=tk.LEFT)
 
         # RATES.xlsx path
@@ -123,6 +123,52 @@ class SettingsDialog:
             command=lambda: self._browse_file(self.rates_var, "RATES.xlsx", [("Excel files", "*.xlsx")]),
         ).pack(side=tk.LEFT)
 
+        # CSV Output folder path
+        output_frame = ttk.Frame(main_frame)
+        output_frame.pack(fill=tk.X, pady=5)
+
+        ttk.Label(output_frame, text="CSV Output:", width=12).pack(side=tk.LEFT)
+        self.output_var = tk.StringVar(value=self.config.get("output_folder") or "")
+        output_entry = ttk.Entry(output_frame, textvariable=self.output_var, width=50)
+        output_entry.pack(side=tk.LEFT, padx=5)
+        ttk.Button(
+            output_frame,
+            text="Browse...",
+            command=lambda: self._browse_directory(self.output_var, "CSV Output Folder"),
+        ).pack(side=tk.LEFT)
+
+        # Database folder path
+        db_frame = ttk.Frame(main_frame)
+        db_frame.pack(fill=tk.X, pady=5)
+
+        ttk.Label(db_frame, text="Database:", width=12).pack(side=tk.LEFT)
+        # Show directory portion of database path (without filename)
+        db_config_path = self.config.get("database_path") or ""
+        if db_config_path and db_config_path.endswith(".db"):
+            db_config_path = os.path.dirname(db_config_path)
+        self.db_var = tk.StringVar(value=db_config_path)
+        db_entry = ttk.Entry(db_frame, textvariable=self.db_var, width=50)
+        db_entry.pack(side=tk.LEFT, padx=5)
+        ttk.Button(
+            db_frame,
+            text="Browse...",
+            command=lambda: self._browse_directory(self.db_var, "Database Folder"),
+        ).pack(side=tk.LEFT)
+
+        # Deductible report output folder
+        deduct_frame = ttk.Frame(main_frame)
+        deduct_frame.pack(fill=tk.X, pady=5)
+
+        ttk.Label(deduct_frame, text="Deduct Rpts:", width=12).pack(side=tk.LEFT)
+        self.deduct_var = tk.StringVar(value=self.config.get("deductible_report_output_dir") or "")
+        deduct_entry = ttk.Entry(deduct_frame, textvariable=self.deduct_var, width=50)
+        deduct_entry.pack(side=tk.LEFT, padx=5)
+        ttk.Button(
+            deduct_frame,
+            text="Browse...",
+            command=lambda: self._browse_directory(self.deduct_var, "Deductible Report Output Folder"),
+        ).pack(side=tk.LEFT)
+
         # Info about config file
         config_path = self.config._get_default_config_path()
         info_label = ttk.Label(
@@ -134,7 +180,7 @@ class SettingsDialog:
         button_frame = ttk.Frame(main_frame)
         button_frame.pack(pady=10)
 
-        ttk.Button(button_frame, text="Save", command=self._save, width=10).pack(side=tk.LEFT, padx=5)
+        ttk.Button(button_frame, text="OK", command=self._save, width=10).pack(side=tk.LEFT, padx=5)
         ttk.Button(button_frame, text="Cancel", command=self._cancel, width=10).pack(side=tk.LEFT, padx=5)
 
     def _browse_file(self, var, title, filetypes):
@@ -146,33 +192,40 @@ class SettingsDialog:
         if filepath:
             var.set(filepath)
 
+    def _browse_directory(self, var, title):
+        """Open directory browser dialog"""
+        initial_dir = var.get() if var.get() else os.path.expanduser("~")
+        dirpath = filedialog.askdirectory(title=f"Select {title}", initialdir=initial_dir)
+        if dirpath:
+            var.set(dirpath)
+
     def _save(self):
         """Save settings and close dialog"""
         # Update config
         trips_path = self.trips_var.get().strip()
         rates_path = self.rates_var.get().strip()
+        output_path = self.output_var.get().strip()
+        db_path = self.db_var.get().strip()
+        deduct_path = self.deduct_var.get().strip()
+
+        # If db_path doesn't end with .db, treat it as a directory and append the filename
+        if db_path and not db_path.endswith(".db"):
+            db_path = os.path.join(db_path, "edi_transactions.db")
 
         self.config.set("trips_csv_path", trips_path if trips_path else None)
         self.config.set("rates_xlsx_path", rates_path if rates_path else None)
+        self.config.set("output_folder", output_path if output_path else None)
+        self.config.set("database_path", db_path if db_path else None)
+        self.config.set("deductible_report_output_dir", deduct_path if deduct_path else None)
 
-        # Try multiple writable locations in order of preference
-        save_locations = [
-            Path.cwd() / "835_config.json",  # Current directory
-            Path.home() / "835_config.json",  # User home directory
-            Path(os.path.dirname(os.path.abspath(__file__))) / "835_config.json",  # App directory
-        ]
-
-        for config_path in save_locations:
-            try:
-                self.config.save(str(config_path))
-                self.result = True
-                self.dialog.destroy()
-                return
-            except (PermissionError, OSError):
-                continue
-
-        # All locations failed
-        messagebox.showerror("Error", "Could not save config to any location. Check write permissions.")
+        # Save to AppData location (same place config.py checks first on startup)
+        try:
+            config_path = self.config._get_default_config_path()
+            self.config.save(str(config_path))
+            self.result = True
+            self.dialog.destroy()
+        except Exception as e:
+            messagebox.showerror("Error", f"Could not save config to {config_path}.\n\nError: {type(e).__name__}: {e}")
 
     def _cancel(self):
         """Close dialog without saving"""
@@ -311,6 +364,14 @@ class ProcessingWindow:
         )
         self.settings_button.pack(side=tk.LEFT, padx=5)
 
+        self.db_report_button = ttk.Button(
+            button_frame,
+            text="DB Deductible Report",
+            command=self.generate_db_deductible_report,
+            style="Modern.TButton",
+        )
+        self.db_report_button.pack(side=tk.LEFT, padx=5)
+
         self.exit_button = ttk.Button(button_frame, text="Exit", command=self.on_closing, style="Modern.TButton")
         self.exit_button.pack(side=tk.RIGHT, padx=5)
 
@@ -333,6 +394,92 @@ class ProcessingWindow:
         dialog = SettingsDialog(self.root, config)
         if dialog.show():
             print("Settings saved successfully.\n")
+
+    def generate_db_deductible_report(self):
+        """Generate deductible report from database"""
+        from config import get_config
+        from database import get_default_db_path
+
+        config = get_config()
+
+        # Check if database exists
+        db_path = get_default_db_path()
+        if not db_path.exists():
+            messagebox.showerror(
+                "Database Not Found",
+                f"No database found at:\n{db_path}\n\n" "Please process 835 files first to populate the database.",
+            )
+            return
+
+        # Check if Fair Health ZIP CSV is configured (optional - proceeds silently without it)
+        trips_path = config.get("trips_csv_path")
+        if not trips_path or not Path(trips_path).exists():
+            trips_path = None  # Proceed without patient payments (will show $0)
+
+        # Use configured output directory or prompt user
+        output_dir = config.get("deductible_report_output_dir")
+        if output_dir:
+            output_dir = os.path.expanduser(output_dir)
+            # Verify directory exists
+            if not Path(output_dir).exists():
+                messagebox.showerror(
+                    "Directory Not Found",
+                    f"Configured output directory not found:\n{output_dir}\n\n"
+                    "Please update Settings or create the directory.",
+                )
+                return
+        else:
+            # Prompt for output directory
+            output_dir = filedialog.askdirectory(
+                title="Select Output Directory for Deductible Reports", initialdir=Path.home() / "Desktop"
+            )
+            if not output_dir:
+                print("No output directory selected.")
+                return
+
+        # Disable button and start progress BEFORE thread starts (prevents race condition)
+        self.db_report_button.config(state=tk.DISABLED)
+        self.status_label.config(text="Generating deductible reports...")
+        self.progress.start()
+
+        # Run in background thread
+        self.processing_thread = threading.Thread(
+            target=self._generate_db_report_thread, args=(trips_path, output_dir), daemon=False
+        )
+        self.processing_thread.start()
+
+    def _generate_db_report_thread(self, trips_path, output_dir):
+        """Background thread for database report generation"""
+        try:
+            if self.shutdown_event.is_set():
+                self._cleanup_db_report_ui()
+                return
+
+            # Import and run the report generator
+            from generate_deductible_collection_reports import generate_from_database
+
+            result = generate_from_database(trips_path, output_dir)
+
+            # Update GUI on completion
+            try:
+                self.root.after(0, lambda: self.progress.stop())
+                self.root.after(0, lambda: self.db_report_button.config(state=tk.NORMAL))
+                self.root.after(0, lambda: self.status_label.config(text="Reports generated successfully!"))
+                self.root.after(0, lambda: self.operation_label.config(text=f"Output: {result}"))
+            except tk.TclError:
+                return
+
+        except Exception as e:
+            self._handle_processing_error(e, "Report generation error")
+            self._cleanup_db_report_ui()
+
+    def _cleanup_db_report_ui(self):
+        """Re-enable DB report button and stop progress on completion/error"""
+        try:
+            self.root.after(0, lambda: self.progress.stop())
+            self.root.after(0, lambda: self.db_report_button.config(state=tk.NORMAL))
+        except tk.TclError:
+            pass
 
     def process_files(self):
         """Process 835 files in selected folder"""
@@ -475,7 +622,7 @@ class ProcessingWindow:
                     "First-Time Setup",
                     "Welcome to 835 EDI File Processor!\n\n"
                     "No configuration file was found. Would you like to configure "
-                    "the paths to Trips.csv and RATES.xlsx now?\n\n"
+                    "the paths to Fair Health ZIP CSV and RATES.xlsx now?\n\n"
                     "These files are optional but enable additional data enrichment features.",
                     icon="info",
                 )
@@ -524,7 +671,12 @@ class ProcessingWindow:
         sys.stderr = sys.__stderr__
         self.root.quit()
         self.root.destroy()
-        # Return control to caller instead of exiting
+
+        # Force exit if threads are still running (prevents zombie processes)
+        if self.processing_thread and self.processing_thread.is_alive():
+            import os
+
+            os._exit(0)  # Force terminate - threads won't stop gracefully
 
 
 def main():

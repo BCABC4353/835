@@ -311,6 +311,75 @@ PAYER_REGISTRY = {
         "dictionary_overrides": {"reference_qualifiers": {}, "priority_rarc_codes": []},
         "notes": ["Payer ID MSTRC (ERA 835)"],
     },
+    "CIGNA_SAMBA": {
+        "description": "Cigna / SAMBA Federal Employee Health Benefits",
+        "identifiers": {
+            "trn03": [],
+            "isa06": [],
+            # SAMBA processes through Cigna (Payer ID 62308)
+            # SAMBA's own Payer ID is 37259
+            "payer_name": ["SAMBA", "SAMBA HEALTH PLAN", "CIGNA"],
+        },
+        "normalize_carc_codes": False,
+        "validation_overrides": {},
+        "parsing_rules": {},
+        "dictionary_overrides": {
+            "reference_qualifiers": {},
+            "priority_rarc_codes": [],
+            # Cigna uses proprietary CARC codes in addition to standard codes
+            "carc_codes": {
+                "NPM": "No Payment Made (Cigna proprietary)",
+            },
+        },
+        "notes": [
+            "SAMBA is a Federal Employee Health Benefits (FEHB) plan",
+            "Claims processed through Cigna (Payer ID 62308)",
+            "SAMBA's own Payer ID is 37259",
+            "Cigna uses proprietary CARC 'NPM' = 'No Payment Made'",
+            "Source: Cigna 835 Companion Guide",
+        ],
+    },
+    "INDIANA_MEDICAID": {
+        "description": "Indiana Health Coverage Programs (IHCP) - Gainwell Technologies",
+        "identifiers": {
+            # TRN03 - Originating Company Identifier (payer TIN preceded by '1')
+            # Source: IHCP 835 Companion Guide v3.4 (August 2024)
+            "trn03": ["1350000000"],
+            # ISA06 - Interchange Sender ID
+            # Source: IHCP TA1/999 Companion Guide
+            "isa06": ["IHCP"],
+            # N1*PR payer name - exact match (secondary identification)
+            "payer_name": ["INDIANA HEALTH COVERAGE PROGRAMS", "IHCP", "GAINWELL TECHNOLOGIES"],
+        },
+        # Indiana does NOT use leading zeros in CARC codes (unlike Medi-Cal)
+        # Source: IHCP 835 Companion Guide - "use the codes as defined without adding leading zeros"
+        "normalize_carc_codes": False,
+        "validation_overrides": {},
+        "parsing_rules": {
+            # SVC01-7 (Procedure Code Description) is "Not Used" by IHCP
+            # SVC06 composite data elements are "not utilized" - billed/adjudicated procedure in SVC01 only
+            # Source: IHCP 835 Companion Guide
+            "svc01_7_not_used": True,
+            "svc06_not_used": True,
+        },
+        "dictionary_overrides": {
+            "reference_qualifiers": {},
+            "priority_rarc_codes": [],
+        },
+        "notes": [
+            "TRN03 = 1350000000 (payer TIN preceded by '1')",
+            "ISA06 = IHCP",
+            "SVC01-7 (Procedure Code Description) is 'Not Used'",
+            "SVC06 composite data elements are 'not utilized'",
+            "Billed/adjudicated procedure included in SVC01 only",
+            "Modifiers (SVC01-3 to SVC01-6) are situational - empty is valid",
+            "Financial cycle runs every Friday night",
+            "835/ERA files posted to IHCP MOVEit (File Exchange) server after financial cycle",
+            "Fiscal agent: Gainwell Technologies",
+            "EDI Technical Assistance: 800-457-4584 or INXIXTradingPartner@gainwelltechnologies.com",
+            "Source: IHCP 835 Companion Guide v3.4 (August 2024)",
+        ],
+    },
     # Template for adding additional payers:
     # "PAYER_KEY": {
     #     "description": "Payer Name",
@@ -839,6 +908,14 @@ PAYER_SPECIFIC_CARC_CODES = {
         "description": "Non-standard adjustment (Clever Care proprietary)",
         "payers": ["CLEVER CARE OF GOLDEN STATE INC"],
         "notes": "Proprietary CARC used by Clever Care; not a standard X12 code",
+    },
+    # Cigna proprietary codes (also used by SAMBA which processes through Cigna)
+    "NPM": {
+        "description": "No Payment Made (Cigna proprietary)",
+        "payers": ["CIGNA", "SAMBA", "SAMBA HEALTH PLAN"],
+        "notes": "Cigna proprietary CARC indicating no payment was issued for this claim/service. "
+        "Not a standard X12 code. SAMBA (Federal Employee Health Benefits) processes "
+        "claims through Cigna. Source: Cigna 835 Companion Guide.",
     },
 }
 
