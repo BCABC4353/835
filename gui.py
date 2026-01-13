@@ -402,8 +402,13 @@ class ProcessingWindow:
 
         config = get_config()
 
-        # Check if database exists
-        db_path = get_default_db_path()
+        # Check if database exists - use configured path first, then fall back to default
+        configured_db_path = config.get("database_path")
+        if configured_db_path:
+            db_path = Path(configured_db_path)
+        else:
+            db_path = get_default_db_path()
+
         if not db_path.exists():
             messagebox.showerror(
                 "Database Not Found",
@@ -442,13 +447,13 @@ class ProcessingWindow:
         self.status_label.config(text="Generating deductible reports...")
         self.progress.start()
 
-        # Run in background thread
+        # Run in background thread - pass the resolved db_path
         self.processing_thread = threading.Thread(
-            target=self._generate_db_report_thread, args=(trips_path, output_dir), daemon=False
+            target=self._generate_db_report_thread, args=(trips_path, output_dir, str(db_path)), daemon=False
         )
         self.processing_thread.start()
 
-    def _generate_db_report_thread(self, trips_path, output_dir):
+    def _generate_db_report_thread(self, trips_path, output_dir, db_path=None):
         """Background thread for database report generation"""
         try:
             if self.shutdown_event.is_set():
@@ -458,7 +463,7 @@ class ProcessingWindow:
             # Import and run the report generator
             from generate_deductible_collection_reports import generate_from_database
 
-            result = generate_from_database(trips_path, output_dir)
+            result = generate_from_database(trips_path, output_dir, db_path=db_path)
 
             # Update GUI on completion
             try:

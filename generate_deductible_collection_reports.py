@@ -90,19 +90,59 @@ def load_data_from_database(db_path: Optional[str] = None) -> List[FlexibleRow]:
     """
     from database import get_database
 
+    # Only load the columns actually needed for deductible reports (~20 vs 500+)
+    # This is ~25x faster than SELECT *
+    REQUIRED_COLUMNS = [
+        # Core identifiers
+        "Filename_File",
+        "RUN",
+        "CLM_PatientControlNumber_L2100_CLP",
+        # Company/Provider
+        "COMPANY",
+        # Payer info
+        "PAYOR_PAID",
+        "Effective_PayerName",
+        # Patient responsibility columns (calculated)
+        "CALCULATED_DEDUCTIBLE",
+        "CALCULATED_COINSURANCE",
+        "CALCULATED_COPAY",
+        "CALCULATED_PATIENT_NON_COVERED",
+        "CALCULATED_PATIENT_OTHER",
+        # Service details
+        "SERVICE_DATE",
+        "DATE_OF_SERVICE",
+        "HCPCS",
+        "SERVICE_CHARGE",
+        "SERVICE_PAYMENT",
+        # Patient info
+        "MEMBER_ID",
+        "NAME",
+        # Secondary payer tracking
+        "IS_PRIMARY",
+        "SecondaryPayer_Name_L1000A_N1",
+    ]
+
     print("Loading data from database...")
     db = get_database(db_path)
 
-    # Query all transactions
-    rows = db.query_transactions()
+    # Get total count for progress
+    total_count = db.get_transaction_count()
+    print(f"  Found {total_count:,} transactions to load...")
 
-    # Wrap each row in FlexibleRow, filtering out empty values to reduce memory
-    # This significantly reduces memory usage since most of 500+ columns are empty
+    # Stream results with progress feedback
     flexible_rows = []
-    for row in rows:
+    last_progress = 0
+
+    for row, row_num, total in db.query_transactions_streaming(columns=REQUIRED_COLUMNS):
         # Filter out None, empty strings, and whitespace-only values
         filtered = {k: v for k, v in row.items() if v is not None and str(v).strip() != ""}
         flexible_rows.append(FlexibleRow(filtered))
+
+        # Progress feedback every 5%
+        progress = (row_num * 100) // total if total > 0 else 100
+        if progress >= last_progress + 5:
+            print(f"  Loading: {row_num:,}/{total:,} ({progress}%)...")
+            last_progress = progress
 
     print(f"  Loaded {len(flexible_rows):,} transactions from database")
 
@@ -6516,8 +6556,14 @@ def generate_all_dashboards(all_company_data, output_dir):
 
     # Generate aggregate dashboard
     aggregate_path = output_dir / "Deductible_Dashboard_ALL_COMPANIES.html"
-    generate_interactive_dashboard(all_company_data, aggregate_path)
-    print(f"  {aggregate_path.name}")
+    try:
+        generate_interactive_dashboard(all_company_data, aggregate_path)
+        if aggregate_path.exists():
+            print(f"  {aggregate_path.name}")
+        else:
+            print(f"  WARNING: {aggregate_path.name} was not created!")
+    except Exception as e:
+        print(f"  ERROR generating {aggregate_path.name}: {e}")
 
     # Generate individual company dashboards
     for company_id, data in sorted(all_company_data.items()):

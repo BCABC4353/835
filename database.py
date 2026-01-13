@@ -745,6 +745,65 @@ class EDIDatabase:
 
             return [dict(row) for row in cursor.fetchall()]
 
+    def query_transactions_streaming(self, columns: List[str] = None, where_clause: str = None, params: tuple = None):
+        """
+        Stream transactions from database with progress feedback.
+
+        This is more memory-efficient than query_transactions() for large datasets
+        because it yields rows one at a time instead of loading all into memory.
+
+        Args:
+            columns: Specific columns to select (None = all, but strongly recommend specifying)
+            where_clause: SQL WHERE clause (without 'WHERE' keyword)
+            params: Parameters for the WHERE clause (use ? placeholders)
+
+        Yields:
+            Tuple of (row_dict, row_number, total_rows)
+        """
+        conn = sqlite3.connect(str(self.db_path), timeout=30.0)
+        conn.row_factory = sqlite3.Row
+        try:
+            cursor = conn.cursor()
+
+            # Get total count first for progress reporting
+            count_sql = "SELECT COUNT(*) FROM edi_transactions"
+            if where_clause:
+                count_sql += f" WHERE {where_clause}"
+            cursor.execute(count_sql, params or ())
+            total_rows = cursor.fetchone()[0]
+
+            # Build SELECT clause
+            if columns:
+                safe_columns = [f'"{sanitize_column_name(c)}"' for c in columns]
+                select_clause = ", ".join(safe_columns)
+            else:
+                select_clause = "*"
+
+            # Build and execute query
+            sql = f"SELECT {select_clause} FROM edi_transactions"
+            if where_clause:
+                sql += f" WHERE {where_clause}"
+
+            cursor.execute(sql, params or ())
+
+            # Stream results
+            row_num = 0
+            for row in cursor:
+                row_num += 1
+                yield dict(row), row_num, total_rows
+        finally:
+            conn.close()
+
+    def get_transaction_count(self, where_clause: str = None, params: tuple = None) -> int:
+        """Get count of transactions matching optional filter."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            sql = "SELECT COUNT(*) FROM edi_transactions"
+            if where_clause:
+                sql += f" WHERE {where_clause}"
+            cursor.execute(sql, params or ())
+            return cursor.fetchone()[0]
+
     def get_processed_files_summary(self) -> List[dict]:
         """Get summary of all processed files."""
         with self._get_connection() as conn:
