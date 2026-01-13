@@ -2036,18 +2036,28 @@ class ZeroFailValidator:
                                     )
 
                 skip_transaction_balance = False
+                payer_key = f"{payer_name}|{payer_state}"
                 if check_total is None or not clp_payments:
                     skip_transaction_balance = True
+                    self.stats["payer_data_quality_issues"][payer_key][
+                        "Transaction balance skip: Missing BPR02 or no CLP claims"
+                    ] += 1
                 elif check_total.copy_abs() <= zero_amount_tolerance:
                     skip_transaction_balance = True
                     self.stats["transaction_balances_skipped_non_payment"] = (
                         self.stats.get("transaction_balances_skipped_non_payment", 0) + 1
                     )
+                    self.stats["payer_data_quality_issues"][payer_key][
+                        "Transaction balance skip: Zero/near-zero amount"
+                    ] += 1
                 elif saw_bpr_segment and notification_only_check:
                     skip_transaction_balance = True
                     self.stats["transaction_balances_skipped_non_payment"] = (
                         self.stats.get("transaction_balances_skipped_non_payment", 0) + 1
                     )
+                    self.stats["payer_data_quality_issues"][payer_key][
+                        "Transaction balance skip: Notification-only transaction"
+                    ] += 1
 
                 if not skip_transaction_balance and check_total is not None and clp_payments:
                     expected = sum(clp_payments) - plb_total
@@ -2151,7 +2161,7 @@ class ZeroFailValidator:
         if not claim_row:
             return
         payer_name = claim_row.get("Payer_Name_L1000A_N1", "Unknown")
-        claim_row.get("Payer_State_L1000A_N4", "Unknown State")
+        payer_state = claim_row.get("Payer_State_L1000A_N4", "Unknown State")
         try:
             claim_charge = self._parse_currency_decimal(claim_row.get("CLM_ChargeAmount_L2100_CLP", 0))
             claim_payment = self._parse_currency_decimal(claim_row.get("CLM_PaymentAmount_L2100_CLP", 0))
@@ -2192,6 +2202,10 @@ class ZeroFailValidator:
                 claim_adj_total += amount
 
         service_rows = [r for r in rows if r.get("SVC_ChargeAmount_L2110_SVC")]
+        # Track empty claims (no service lines)
+        if not service_rows and claim_status != "25":  # Predeterminations may not have services
+            payer_key = f"{payer_name}|{payer_state}"
+            self.stats["payer_data_quality_issues"][payer_key]["Empty claim"] += 1
         for svc_row in service_rows:
             for cas_idx in range(1, 6):
                 cas_amount_field = f"SVC_CAS{cas_idx}_Amount_L2110_CAS"
@@ -2244,6 +2258,10 @@ class ZeroFailValidator:
                     error_location = f"Claim {display_claim_id}"
                     if file_name:
                         error_location += f" (File: {file_name})"
+                    # Build edi_context showing each service line
+                    svc_context = self._build_service_sum_context(
+                        display_claim_id, claim_charge, service_charge_total, service_rows, "charge"
+                    )
                     self.errors.append(
                         ValidationError(
                             "CALC",
@@ -2252,6 +2270,7 @@ class ZeroFailValidator:
                             expected=float(claim_charge),
                             actual=float(service_charge_total),
                             field="CLM_ChargeAmount_L2100_CLP",
+                            edi_context=svc_context,
                         )
                     )
             except (ValueError, TypeError, decimal.InvalidOperation, decimal.Overflow):
@@ -2261,6 +2280,10 @@ class ZeroFailValidator:
                     error_location = f"Claim {display_claim_id}"
                     if file_name:
                         error_location += f" (File: {file_name})"
+                    # Build edi_context showing each service line
+                    svc_context = self._build_service_sum_context(
+                        display_claim_id, claim_payment, service_payment_total, service_rows, "payment"
+                    )
                     self.errors.append(
                         ValidationError(
                             "CALC",
@@ -2269,6 +2292,7 @@ class ZeroFailValidator:
                             expected=float(claim_payment),
                             actual=float(service_payment_total),
                             field="CLM_PaymentAmount_L2100_CLP",
+                            edi_context=svc_context,
                         )
                     )
             except (ValueError, TypeError, decimal.InvalidOperation, decimal.Overflow):
@@ -2406,6 +2430,62 @@ class ZeroFailValidator:
 
         return context
 
+    def _build_service_sum_context(
+        self,
+        claim_id: str,
+        claim_total: Decimal,
+        service_total: Decimal,
+        service_rows: List[dict],
+        sum_type: str,
+    ) -> List[str]:
+        """
+        Build comprehensive debugging context for service sum errors (charge or payment).
+        """
+        context = []
+        diff = abs(claim_total - service_total)
+        field_prefix = "SVC_ChargeAmount" if sum_type == "charge" else "SVC_PaymentAmount"
+        clp_field = "CLP03" if sum_type == "charge" else "CLP04"
+        svc_field = "SVC02" if sum_type == "charge" else "SVC03"
+
+        context.append("=" * 60)
+        context.append(f"SERVICE {sum_type.upper()} SUM BREAKDOWN")
+        context.append("=" * 60)
+        context.append("")
+        context.append(f"Claim ID: {claim_id}")
+        context.append(f"Total Service Lines: {len(service_rows)}")
+        context.append("")
+        context.append(
+            f"Formula: Sum of {svc_field} (Service {sum_type.title()}s) should equal {clp_field} (Claim {sum_type.title()})"
+        )
+        context.append("")
+        context.append(f"  {clp_field} (Claim {sum_type.title()}):  ${float(claim_total):,.2f}")
+        context.append(f"  Sum of {svc_field}:              ${float(service_total):,.2f}")
+        context.append("  ----------------------------------------")
+        context.append(f"  DIFFERENCE:                  ${float(diff):,.2f}")
+        context.append("")
+
+        # List all service lines
+        context.append("=" * 60)
+        context.append("SERVICE LINE BREAKDOWN")
+        context.append("=" * 60)
+        running_total = Decimal("0")
+        for idx, svc_row in enumerate(service_rows, 1):
+            proc = svc_row.get("SVC_ProcedureCode_L2110_SVC", "N/A")
+            amount_str = svc_row.get(f"{field_prefix}_L2110_SVC", "0")
+            try:
+                amount = self._parse_currency_decimal(amount_str)
+            except (ValueError, TypeError):
+                amount = Decimal("0")
+            running_total += amount
+            context.append(f"  {idx}. Procedure: {proc}")
+            context.append(f"     {sum_type.title()}: ${float(amount):,.2f}")
+            context.append(f"     Running Total: ${float(running_total):,.2f}")
+        context.append("")
+        context.append(f"Final Sum: ${float(running_total):,.2f}")
+        context.append("")
+
+        return context
+
     def _validate_completeness(self, edi_data: Dict, csv_rows: List[dict], delimiter_or_files, verbose: bool = False):
         """Layer 2: Validate 100% field coverage"""
 
@@ -2428,6 +2508,20 @@ class ZeroFailValidator:
         ]
         claim_counts = Counter(claim_numbers)
         duplicate_claim_numbers = {cn for cn, count in claim_counts.items() if count > 1}
+        # Track duplicate claims in payer_data_quality_issues
+        if duplicate_claim_numbers:
+            for dup_claim in duplicate_claim_numbers:
+                # Find payer for this claim
+                claim_row = next(
+                    (r for r in csv_rows if r.get("CLM_PatientControlNumber_L2100_CLP") == dup_claim), None
+                )
+                if claim_row:
+                    payer_name = claim_row.get("Payer_Name_L1000A_N1", "Unknown")
+                    payer_state = claim_row.get("Payer_State_L1000A_N4", "Unknown State")
+                    payer_key = f"{payer_name}|{payer_state}"
+                    self.stats["payer_data_quality_issues"][payer_key][f"Duplicate claim: {dup_claim}"] = claim_counts[
+                        dup_claim
+                    ]
         if verbose:
             logger.info("      Building expected fields from %d claims...", len(edi_data.get("claims", {})))
         expected_fields = self._build_expected_fields(edi_data, delimiter)
@@ -3710,13 +3804,62 @@ class ZeroFailValidator:
             "warnings": warnings_list,
             "missing_mappings": dict(self.stats["missing_mappings"]),
             "payers_missing_mileage_units": dict(self.stats["payers_missing_mileage_units"]),
-            "payer_data_quality_issues": {k: dict(v) for k, v in self.stats["payer_data_quality_issues"].items()},
+            "payer_data_quality_issues": self._reorganize_quality_issues(),
             "priority_rarc_codes": {k: dict(v) for k, v in self.stats["priority_rarc_codes"].items()},
             "date_format_validation": self.stats.get("date_format_validation", {}),
             "sample_errors": self._get_sample_errors(csv_rows),
             "validation_timestamp": datetime.now().isoformat(),
         }
         return report
+
+    def _reorganize_quality_issues(self) -> Dict:
+        """Reorganize payer_data_quality_issues into structured categories for reporting"""
+        raw_issues = self.stats["payer_data_quality_issues"]
+        result = {
+            "missing_carc_codes": defaultdict(dict),
+            "missing_rarc_codes": defaultdict(dict),
+            "missing_dictionary_entries": defaultdict(dict),
+            "unrecognized_date_formats": defaultdict(int),
+            "transaction_balance_skips": defaultdict(int),
+            "empty_claims_count": 0,
+            "duplicate_claims": defaultdict(int),
+            "other_issues": defaultdict(dict),
+        }
+        for payer_key, issues in raw_issues.items():
+            for issue_key, count in issues.items():
+                if issue_key.startswith("Missing CARC: "):
+                    code = issue_key.replace("Missing CARC: ", "")
+                    result["missing_carc_codes"][code][payer_key] = count
+                elif issue_key.startswith("Missing RARC: "):
+                    code = issue_key.replace("Missing RARC: ", "")
+                    result["missing_rarc_codes"][code][payer_key] = count
+                elif issue_key.startswith("Missing dictionary: "):
+                    entry_type = issue_key.replace("Missing dictionary: ", "")
+                    result["missing_dictionary_entries"][entry_type][payer_key] = count
+                elif issue_key.startswith("Unrecognized date format: "):
+                    date_val = issue_key.replace("Unrecognized date format: ", "")
+                    result["unrecognized_date_formats"][date_val] += count
+                elif issue_key.startswith("Transaction balance skip: "):
+                    reason = issue_key.replace("Transaction balance skip: ", "")
+                    result["transaction_balance_skips"][reason] += count
+                elif issue_key == "Empty claim":
+                    result["empty_claims_count"] += count
+                elif issue_key.startswith("Duplicate claim: "):
+                    claim_id = issue_key.replace("Duplicate claim: ", "")
+                    result["duplicate_claims"][claim_id] += count
+                else:
+                    result["other_issues"][issue_key][payer_key] = count
+        # Convert defaultdicts to regular dicts
+        return {
+            "missing_carc_codes": dict(result["missing_carc_codes"]),
+            "missing_rarc_codes": dict(result["missing_rarc_codes"]),
+            "missing_dictionary_entries": dict(result["missing_dictionary_entries"]),
+            "unrecognized_date_formats": dict(result["unrecognized_date_formats"]),
+            "transaction_balance_skips": dict(result["transaction_balance_skips"]),
+            "empty_claims_count": result["empty_claims_count"],
+            "duplicate_claims": dict(result["duplicate_claims"]),
+            "other_issues": dict(result["other_issues"]),
+        }
 
     def _get_sample_errors(self, csv_rows: List[dict], max_samples: int = 5) -> List[Dict]:
         """Get sample errors with redacted data"""
@@ -3868,6 +4011,65 @@ def generate_executive_dashboard(validation_result: Dict) -> str:
             display = f"{payer_name} ({payer_state})" if payer_state else payer_name
             lines.append(f"    - {display}: {count} service line(s)")
         lines.append("")
+    # Payer Data Quality Issues - CARC/RARC codes, etc.
+    if validation_result.get("payer_data_quality_issues"):
+        quality_issues = validation_result["payer_data_quality_issues"]
+        has_issues = any(
+            quality_issues.get(k)
+            for k in [
+                "missing_carc_codes",
+                "missing_rarc_codes",
+                "missing_dictionary_entries",
+                "unrecognized_date_formats",
+                "transaction_balance_skips",
+                "empty_claims_count",
+                "duplicate_claims",
+            ]
+        )
+        if has_issues:
+            lines.append("PAYER DATA QUALITY ISSUES:")
+            lines.append("-" * 100)
+            # Missing CARC codes summary
+            if quality_issues.get("missing_carc_codes"):
+                carc_data = quality_issues["missing_carc_codes"]
+                carc_count = len(carc_data)
+                lines.append(f"  Missing CARC Codes: {carc_count} code(s) not in dictionary")
+                for code in sorted(carc_data.keys())[:5]:
+                    payers = carc_data[code]
+                    payer_list = list(payers.keys()) if isinstance(payers, dict) else list(payers)
+                    lines.append(f"    - Code {code}: used by {len(payer_list)} payer(s)")
+                if carc_count > 5:
+                    lines.append(f"    ... and {carc_count - 5} more codes")
+            # Missing RARC codes summary
+            if quality_issues.get("missing_rarc_codes"):
+                rarc_data = quality_issues["missing_rarc_codes"]
+                rarc_count = len(rarc_data)
+                lines.append(f"  Missing RARC Codes: {rarc_count} code(s) not in dictionary")
+                for code in sorted(rarc_data.keys())[:5]:
+                    payers = rarc_data[code]
+                    payer_list = list(payers.keys()) if isinstance(payers, dict) else list(payers)
+                    lines.append(f"    - Code {code}: used by {len(payer_list)} payer(s)")
+                if rarc_count > 5:
+                    lines.append(f"    ... and {rarc_count - 5} more codes")
+            # Transaction balance skips
+            if quality_issues.get("transaction_balance_skips"):
+                skip_data = quality_issues["transaction_balance_skips"]
+                total_skips = sum(skip_data.values())
+                lines.append(f"  Transaction Balance Skips: {total_skips} transaction(s) skipped")
+                for reason, count in sorted(skip_data.items(), key=lambda x: x[1], reverse=True):
+                    lines.append(f"    - {reason}: {count}")
+            # Empty claims
+            if quality_issues.get("empty_claims_count"):
+                lines.append(f"  Empty Claims: {quality_issues['empty_claims_count']} claim(s) with no service lines")
+            # Duplicate claims
+            if quality_issues.get("duplicate_claims"):
+                dup_count = len(quality_issues["duplicate_claims"])
+                lines.append(f"  Duplicate Claims: {dup_count} claim ID(s) appear multiple times")
+            # Unrecognized date formats
+            if quality_issues.get("unrecognized_date_formats"):
+                date_count = len(quality_issues["unrecognized_date_formats"])
+                lines.append(f"  Unrecognized Date Formats: {date_count} unique format(s)")
+            lines.append("")
     lines.append("RECOMMENDED ACTIONS:")
     if summary["error_count"] == 0:
         lines.append("  [OK] No critical issues found - system operating correctly")
@@ -4042,6 +4244,93 @@ def generate_text_report(validation_result: Dict, redact: bool = True) -> str:
             summary_parts = [f"{count} {error_type}" for error_type, count in error_counts.items()]
             lines.append(f"{payer}: {', '.join(summary_parts)} (Total: {total})")
         lines.append("")
+    # Payer Data Quality Issues - CARC/RARC codes, date formats, etc.
+    if validation_result.get("payer_data_quality_issues"):
+        lines.append("-" * 80)
+        lines.append("PAYER DATA QUALITY ISSUES")
+        lines.append("-" * 80)
+        lines.append("")
+        lines.append("Issues detected that may require payer follow-up or dictionary updates:")
+        lines.append("")
+        quality_issues = validation_result["payer_data_quality_issues"]
+        # Missing CARC codes
+        if quality_issues.get("missing_carc_codes"):
+            lines.append("MISSING CARC CODES (Claim Adjustment Reason Codes):")
+            lines.append("-" * 40)
+            carc_data = quality_issues["missing_carc_codes"]
+            for code, payers in sorted(carc_data.items()):
+                payer_list = list(payers.keys()) if isinstance(payers, dict) else list(payers)
+                lines.append(f"  Code: {code}")
+                lines.append(f"    Payers: {', '.join(payer_list[:5])}")
+                if len(payer_list) > 5:
+                    lines.append(f"    ... and {len(payer_list) - 5} more payers")
+            lines.append("")
+        # Missing RARC codes
+        if quality_issues.get("missing_rarc_codes"):
+            lines.append("MISSING RARC CODES (Remittance Advice Remark Codes):")
+            lines.append("-" * 40)
+            rarc_data = quality_issues["missing_rarc_codes"]
+            for code, payers in sorted(rarc_data.items()):
+                payer_list = list(payers.keys()) if isinstance(payers, dict) else list(payers)
+                lines.append(f"  Code: {code}")
+                lines.append(f"    Payers: {', '.join(payer_list[:5])}")
+                if len(payer_list) > 5:
+                    lines.append(f"    ... and {len(payer_list) - 5} more payers")
+            lines.append("")
+        # Missing dictionary entries
+        if quality_issues.get("missing_dictionary_entries"):
+            lines.append("MISSING DICTIONARY ENTRIES:")
+            lines.append("-" * 40)
+            dict_data = quality_issues["missing_dictionary_entries"]
+            for entry_type, entries in sorted(dict_data.items()):
+                entry_list = list(entries.keys()) if isinstance(entries, dict) else list(entries)
+                lines.append(f"  Type: {entry_type}")
+                lines.append(f"    Missing: {', '.join(str(e) for e in entry_list[:10])}")
+                if len(entry_list) > 10:
+                    lines.append(f"    ... and {len(entry_list) - 10} more entries")
+            lines.append("")
+        # Unrecognized date formats
+        if quality_issues.get("unrecognized_date_formats"):
+            lines.append("UNRECOGNIZED DATE FORMATS:")
+            lines.append("-" * 40)
+            date_data = quality_issues["unrecognized_date_formats"]
+            for date_val, count in sorted(date_data.items(), key=lambda x: x[1], reverse=True)[:10]:
+                lines.append(f"  '{date_val}' - {count} occurrence(s)")
+            if len(date_data) > 10:
+                lines.append(f"  ... and {len(date_data) - 10} more formats")
+            lines.append("")
+        # Transaction balance skips
+        if quality_issues.get("transaction_balance_skips"):
+            lines.append("TRANSACTION BALANCE SKIPS:")
+            lines.append("-" * 40)
+            skip_data = quality_issues["transaction_balance_skips"]
+            for reason, count in sorted(skip_data.items(), key=lambda x: x[1], reverse=True):
+                lines.append(f"  {reason}: {count} transaction(s)")
+            lines.append("")
+        # Empty claims
+        if quality_issues.get("empty_claims_count"):
+            lines.append(f"EMPTY CLAIMS: {quality_issues['empty_claims_count']} claim(s) with no service lines")
+            lines.append("")
+        # Duplicate claims
+        if quality_issues.get("duplicate_claims"):
+            lines.append("DUPLICATE CLAIMS DETECTED:")
+            lines.append("-" * 40)
+            dup_data = quality_issues["duplicate_claims"]
+            for claim_id, count in sorted(dup_data.items(), key=lambda x: x[1], reverse=True)[:10]:
+                lines.append(f"  Claim {claim_id}: {count} occurrence(s)")
+            if len(dup_data) > 10:
+                lines.append(f"  ... and {len(dup_data) - 10} more duplicates")
+            lines.append("")
+        # Other issues not categorized above
+        if quality_issues.get("other_issues"):
+            lines.append("OTHER DATA QUALITY ISSUES:")
+            lines.append("-" * 40)
+            other_data = quality_issues["other_issues"]
+            for issue_key, payers in sorted(other_data.items()):
+                total = sum(payers.values()) if isinstance(payers, dict) else payers
+                lines.append(f"  {issue_key}: {total} occurrence(s)")
+            lines.append("")
+        lines.append("-" * 80)
     return "\n".join(lines)
 
 
@@ -4377,6 +4666,128 @@ def generate_html_report(validation_result: Dict, redact: bool = True) -> str:
         </div>
     </div>
 """)
+    # Payer Data Quality Issues section
+    if validation_result.get("payer_data_quality_issues"):
+        html_parts.append("""
+    <h2>Payer Data Quality Issues</h2>
+    <p>Issues detected that may require payer follow-up or dictionary updates:</p>
+""")
+        quality_issues = validation_result["payer_data_quality_issues"]
+        # Missing CARC codes
+        if quality_issues.get("missing_carc_codes"):
+            html_parts.append("""
+    <h3>Missing CARC Codes (Claim Adjustment Reason Codes)</h3>
+    <table class="summary-table">
+        <tr><th>Code</th><th>Payers Affected</th></tr>
+""")
+            carc_data = quality_issues["missing_carc_codes"]
+            for code, payers in sorted(carc_data.items()):
+                payer_list = list(payers.keys()) if isinstance(payers, dict) else list(payers)
+                payer_display = ", ".join(payer_list[:5])
+                if len(payer_list) > 5:
+                    payer_display += f" ... and {len(payer_list) - 5} more"
+                html_parts.append(
+                    f"        <tr><td><code>{html.escape(str(code))}</code></td><td>{html.escape(payer_display)}</td></tr>\n"
+                )
+            html_parts.append("    </table>\n")
+        # Missing RARC codes
+        if quality_issues.get("missing_rarc_codes"):
+            html_parts.append("""
+    <h3>Missing RARC Codes (Remittance Advice Remark Codes)</h3>
+    <table class="summary-table">
+        <tr><th>Code</th><th>Payers Affected</th></tr>
+""")
+            rarc_data = quality_issues["missing_rarc_codes"]
+            for code, payers in sorted(rarc_data.items()):
+                payer_list = list(payers.keys()) if isinstance(payers, dict) else list(payers)
+                payer_display = ", ".join(payer_list[:5])
+                if len(payer_list) > 5:
+                    payer_display += f" ... and {len(payer_list) - 5} more"
+                html_parts.append(
+                    f"        <tr><td><code>{html.escape(str(code))}</code></td><td>{html.escape(payer_display)}</td></tr>\n"
+                )
+            html_parts.append("    </table>\n")
+        # Missing dictionary entries
+        if quality_issues.get("missing_dictionary_entries"):
+            html_parts.append("""
+    <h3>Missing Dictionary Entries</h3>
+    <table class="summary-table">
+        <tr><th>Entry Type</th><th>Missing Values</th></tr>
+""")
+            dict_data = quality_issues["missing_dictionary_entries"]
+            for entry_type, entries in sorted(dict_data.items()):
+                entry_list = list(entries.keys()) if isinstance(entries, dict) else list(entries)
+                entry_display = ", ".join(str(e) for e in entry_list[:10])
+                if len(entry_list) > 10:
+                    entry_display += f" ... and {len(entry_list) - 10} more"
+                html_parts.append(
+                    f"        <tr><td>{html.escape(str(entry_type))}</td><td><code>{html.escape(entry_display)}</code></td></tr>\n"
+                )
+            html_parts.append("    </table>\n")
+        # Unrecognized date formats
+        if quality_issues.get("unrecognized_date_formats"):
+            html_parts.append("""
+    <h3>Unrecognized Date Formats</h3>
+    <table class="summary-table">
+        <tr><th>Date Value</th><th>Occurrences</th></tr>
+""")
+            date_data = quality_issues["unrecognized_date_formats"]
+            for date_val, count in sorted(date_data.items(), key=lambda x: x[1], reverse=True)[:10]:
+                html_parts.append(
+                    f"        <tr><td><code>{html.escape(str(date_val))}</code></td><td>{count}</td></tr>\n"
+                )
+            if len(date_data) > 10:
+                html_parts.append(
+                    f"        <tr><td colspan='2'><em>... and {len(date_data) - 10} more formats</em></td></tr>\n"
+                )
+            html_parts.append("    </table>\n")
+        # Transaction balance skips
+        if quality_issues.get("transaction_balance_skips"):
+            html_parts.append("""
+    <h3>Transaction Balance Skips</h3>
+    <div class="warning-box">
+        <strong>Transactions skipped during balance validation:</strong><br>
+""")
+            skip_data = quality_issues["transaction_balance_skips"]
+            for reason, count in sorted(skip_data.items(), key=lambda x: x[1], reverse=True):
+                html_parts.append(f"        • {html.escape(str(reason))}: {count} transaction(s)<br>\n")
+            html_parts.append("    </div>\n")
+        # Empty claims
+        if quality_issues.get("empty_claims_count"):
+            html_parts.append(f"""
+    <div class="warning-box">
+        <strong>Empty Claims:</strong> {quality_issues['empty_claims_count']} claim(s) found with no service lines
+    </div>
+""")
+        # Duplicate claims
+        if quality_issues.get("duplicate_claims"):
+            html_parts.append("""
+    <h3>Duplicate Claims Detected</h3>
+    <table class="summary-table">
+        <tr><th>Claim ID</th><th>Occurrences</th></tr>
+""")
+            dup_data = quality_issues["duplicate_claims"]
+            for claim_id, count in sorted(dup_data.items(), key=lambda x: x[1], reverse=True)[:10]:
+                html_parts.append(
+                    f"        <tr><td><code>{html.escape(str(claim_id))}</code></td><td>{count}</td></tr>\n"
+                )
+            if len(dup_data) > 10:
+                html_parts.append(
+                    f"        <tr><td colspan='2'><em>... and {len(dup_data) - 10} more duplicates</em></td></tr>\n"
+                )
+            html_parts.append("    </table>\n")
+        # Other issues not categorized above
+        if quality_issues.get("other_issues"):
+            html_parts.append("""
+    <h3>Other Data Quality Issues</h3>
+    <table class="summary-table">
+        <tr><th>Issue</th><th>Occurrences</th></tr>
+""")
+            other_data = quality_issues["other_issues"]
+            for issue_key, payers in sorted(other_data.items()):
+                total = sum(payers.values()) if isinstance(payers, dict) else payers
+                html_parts.append(f"        <tr><td>{html.escape(str(issue_key))}</td><td>{total}</td></tr>\n")
+            html_parts.append("    </table>\n")
     html_parts.append("""
 <script>
 var coll = document.getElementsByClassName("collapsible");
