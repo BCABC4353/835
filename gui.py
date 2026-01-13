@@ -109,19 +109,34 @@ class SettingsDialog:
             command=lambda: self._browse_file(self.trips_var, "Fair Health ZIP CSV", [("CSV files", "*.csv")]),
         ).pack(side=tk.LEFT)
 
-        # RATES.xlsx path
+        # RATES path (Excel file, .gsheet file, or Google Sheet URL)
         rates_frame = ttk.Frame(main_frame)
         rates_frame.pack(fill=tk.X, pady=5)
 
-        ttk.Label(rates_frame, text="RATES.xlsx:", width=12).pack(side=tk.LEFT)
+        ttk.Label(rates_frame, text="RATES:", width=12).pack(side=tk.LEFT)
         self.rates_var = tk.StringVar(value=self.config.get("rates_xlsx_path") or "")
         rates_entry = ttk.Entry(rates_frame, textvariable=self.rates_var, width=50)
         rates_entry.pack(side=tk.LEFT, padx=5)
         ttk.Button(
             rates_frame,
             text="Browse...",
-            command=lambda: self._browse_file(self.rates_var, "RATES.xlsx", [("Excel files", "*.xlsx")]),
+            command=lambda: self._browse_file(
+                self.rates_var,
+                "RATES File",
+                [("Supported files", "*.xlsx *.gsheet"), ("Excel files", "*.xlsx"), ("Google Sheet links", "*.gsheet")],
+            ),
         ).pack(side=tk.LEFT)
+
+        # Add hint for Google Sheet support
+        rates_hint_frame = ttk.Frame(main_frame)
+        rates_hint_frame.pack(fill=tk.X, pady=(0, 5))
+        ttk.Label(rates_hint_frame, text="", width=12).pack(side=tk.LEFT)
+        ttk.Label(
+            rates_hint_frame,
+            text="(.xlsx, .gsheet from Google Drive, or Google Sheet URL)",
+            font=("Segoe UI", 8),
+            foreground="#666666",
+        ).pack(side=tk.LEFT, padx=5)
 
         # CSV Output folder path
         output_frame = ttk.Frame(main_frame)

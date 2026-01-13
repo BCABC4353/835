@@ -89,14 +89,19 @@ class EDIProcessor:
             logger.info("Fair Health rates path not configured (columns will be empty)")
             return False
 
-        if not os.path.exists(rates_file_path):
+        # Check if it's a Google Sheet URL (skip file existence check for URLs)
+        is_google_sheet = rates.is_google_sheet(rates_file_path)
+
+        if not is_google_sheet and not os.path.exists(rates_file_path):
             logger.info("Fair Health rates file not found: %s (columns will be empty)", rates_file_path)
             return False
 
         try:
             self.fair_health_rates = rates.FairHealthRates()
-            stats = self.fair_health_rates.load_from_excel(rates_file_path)
-            logger.info("Loaded Fair Health rates: %s rate combinations", stats["rate_keys"])
+            # Use unified load() method that handles both Excel and Google Sheets
+            stats = self.fair_health_rates.load(rates_file_path)
+            source_type = stats.get("source", "excel")
+            logger.info("Loaded Fair Health rates from %s: %s rate combinations", source_type, stats["rate_keys"])
             logger.debug("  ZIP codes: %s, HCPCS codes: %s", stats["unique_zips"], stats["unique_hcpcs"])
             return True
         except ImportError as e:
@@ -109,6 +114,10 @@ class EDIProcessor:
             return False
         except (KeyError, ValueError) as e:
             logger.warning("Failed to load Fair Health rates - data format error: %s", e)
+            self.fair_health_rates = None
+            return False
+        except Exception as e:
+            logger.warning("Failed to load Fair Health rates: %s", e)
             self.fair_health_rates = None
             return False
 

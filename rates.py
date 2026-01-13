@@ -1,10 +1,14 @@
 """
 Fair Health Rates Parser
 
-Parses rate data from Fair Health Excel files and provides lookup functionality
-for rates based on ZIP code, HCPCS code, and optional service date.
+Parses rate data from Fair Health Excel files or Google Sheets and provides lookup
+functionality for rates based on ZIP code, HCPCS code, and optional service date.
 
-Column mapping from source Excel:
+Supports loading from:
+- Local Excel files (.xlsx)
+- Google Sheets (public or shared with "Anyone with the link")
+
+Column mapping from source:
 - "Enter the location where you will be receiving or have received medical care" = ZIP Code
 - "Date (GMT)" = date
 - "Enter a Procedure Code or Keyword" = HCPCS
@@ -12,12 +16,20 @@ Column mapping from source Excel:
 - "In-Network" = Rate 2
 """
 
+import csv
+import io
 import logging
 import re
 from datetime import date, datetime, timedelta
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 logger = logging.getLogger(__name__)
+
+# Try to import requests for Google Sheets support
+try:
+    import requests
+except ImportError:
+    requests = None
 
 # Pre-compiled regex patterns for normalization (performance optimization)
 _RE_NON_ALNUM = re.compile(r"[^A-Z0-9]")
@@ -28,6 +40,111 @@ try:
     import openpyxl
 except ImportError:
     openpyxl = None
+
+# Google Sheets URL patterns
+_RE_GOOGLE_SHEET_URL = re.compile(r"https?://docs\.google\.com/spreadsheets/d/([a-zA-Z0-9_-]+)")
+_RE_GOOGLE_SHEET_ID = re.compile(r"^[a-zA-Z0-9_-]{20,}$")
+
+
+def read_gsheet_file(filepath: str) -> Optional[str]:
+    """
+    Read a .gsheet shortcut file and extract the Google Sheet URL.
+
+    .gsheet files are created by Google Drive for Desktop and contain
+    JSON with a 'url' field pointing to the actual Google Sheet.
+
+    Args:
+        filepath: Path to the .gsheet file
+
+    Returns:
+        The Google Sheet URL or None if not found
+    """
+    import json as json_module
+
+    try:
+        with open(filepath, encoding="utf-8") as f:
+            content = f.read().strip()
+            # Try to parse as JSON
+            try:
+                data = json_module.loads(content)
+                if isinstance(data, dict) and "url" in data:
+                    return data["url"]
+            except json_module.JSONDecodeError:
+                pass
+            # If not JSON, check if the content itself is a URL
+            if "docs.google.com/spreadsheets" in content:
+                # Try to extract URL from content
+                match = _RE_GOOGLE_SHEET_URL.search(content)
+                if match:
+                    return f"https://docs.google.com/spreadsheets/d/{match.group(1)}"
+    except OSError as e:
+        logger.warning("Failed to read .gsheet file %s: %s", filepath, e)
+    return None
+
+
+def is_google_sheet(path: str) -> bool:
+    """
+    Check if a path is a Google Sheet URL, ID, or .gsheet file.
+
+    Args:
+        path: File path or URL to check
+
+    Returns:
+        True if this looks like a Google Sheet reference
+    """
+    if not path:
+        return False
+    path = path.strip()
+    # Check for .gsheet file (Google Drive for Desktop shortcut)
+    if path.lower().endswith(".gsheet"):
+        return True
+    # Check for Google Sheets URL
+    if "docs.google.com/spreadsheets" in path:
+        return True
+    # Check for standalone sheet ID (long alphanumeric string)
+    if _RE_GOOGLE_SHEET_ID.match(path):
+        return True
+    return False
+
+
+def extract_google_sheet_id(path: str) -> Optional[str]:
+    """
+    Extract the Google Sheet ID from a URL or return the ID if already provided.
+
+    Args:
+        path: Google Sheet URL or ID
+
+    Returns:
+        The sheet ID or None if not a valid Google Sheet reference
+    """
+    if not path:
+        return None
+    path = path.strip()
+
+    # Try to extract from URL
+    match = _RE_GOOGLE_SHEET_URL.search(path)
+    if match:
+        return match.group(1)
+
+    # Check if it's already a sheet ID
+    if _RE_GOOGLE_SHEET_ID.match(path):
+        return path
+
+    return None
+
+
+def get_google_sheet_csv_url(sheet_id: str, gid: str = "0") -> str:
+    """
+    Get the CSV export URL for a Google Sheet.
+
+    Args:
+        sheet_id: The Google Sheet ID
+        gid: The sheet/tab ID within the spreadsheet (default "0" for first sheet)
+
+    Returns:
+        URL that returns the sheet data as CSV
+    """
+    return f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=csv&gid={gid}"
 
 
 def normalize_hcpcs(hcpcs: Any) -> Optional[str]:
@@ -251,6 +368,182 @@ class FairHealthRates:
             "unique_hcpcs": len(self.load_stats["unique_hcpcs"]),
             "rate_keys": len(self.rate_ranges),
         }
+
+    def load_from_google_sheet(self, sheet_url_or_id: str) -> dict:
+        """
+        Load rate data from a Google Sheet.
+
+        The sheet must be publicly accessible or shared with "Anyone with the link".
+        Uses CSV export which doesn't require API credentials.
+
+        Args:
+            sheet_url_or_id: Google Sheet URL or sheet ID
+
+        Returns:
+            dict with load statistics
+
+        Raises:
+            ImportError: If requests library is not installed
+            ValueError: If the sheet URL/ID is invalid
+            Exception: If the sheet cannot be accessed
+        """
+        if requests is None:
+            raise ImportError("requests library is required for Google Sheets. Install with: pip install requests")
+
+        sheet_id = extract_google_sheet_id(sheet_url_or_id)
+        if not sheet_id:
+            raise ValueError(f"Invalid Google Sheet URL or ID: {sheet_url_or_id}")
+
+        csv_url = get_google_sheet_csv_url(sheet_id)
+        logger.info("Fetching rates from Google Sheet: %s", csv_url)
+
+        try:
+            response = requests.get(csv_url, timeout=30)
+            response.raise_for_status()
+        except requests.exceptions.RequestException as e:
+            raise Exception(
+                f"Failed to fetch Google Sheet. Make sure the sheet is shared with 'Anyone with the link'. Error: {e}"
+            ) from e
+
+        # Parse CSV content
+        content = response.text
+        reader = csv.reader(io.StringIO(content))
+
+        # Get headers from first row
+        headers = next(reader, [])
+        headers = [h.strip() if h else "" for h in headers]
+
+        # Map column names (same logic as Excel loader)
+        col_map = {}
+        for idx, header in enumerate(headers):
+            header_lower = header.lower()
+            if "location" in header_lower and "medical care" in header_lower:
+                col_map["zip"] = idx
+            elif "date" in header_lower and "gmt" in header_lower:
+                col_map["date"] = idx
+            elif "procedure code" in header_lower or "keyword" in header_lower:
+                col_map["hcpcs"] = idx
+            elif "out of network" in header_lower:
+                col_map["rate1"] = idx
+            elif "in-network" in header_lower or "in network" in header_lower:
+                col_map["rate2"] = idx
+
+        if not col_map:
+            raise ValueError("Could not find expected columns in Google Sheet. Check column headers.")
+
+        # Collect raw data grouped by (zip, hcpcs)
+        raw_data: Dict[Tuple[int, str], List[dict]] = {}
+
+        for row in reader:
+            self.load_stats["rows_processed"] += 1
+
+            # Get values (with safe indexing)
+            def safe_get(idx_key):
+                idx = col_map.get(idx_key)
+                if idx is not None and idx < len(row):
+                    return row[idx]
+                return None
+
+            zip_val = safe_get("zip")
+            date_val = safe_get("date")
+            hcpcs_val = safe_get("hcpcs")
+            rate1_val = safe_get("rate1")
+            rate2_val = safe_get("rate2")
+
+            # Normalize values
+            zip_code = normalize_zip(zip_val)
+            hcpcs = normalize_hcpcs(hcpcs_val)
+            rate1 = normalize_rate(rate1_val)
+            rate2 = normalize_rate(rate2_val)
+
+            # Skip invalid rows
+            if zip_code is None or hcpcs is None:
+                self.load_stats["rows_skipped"] += 1
+                continue
+
+            # Skip rows with no valid rates
+            if rate1 is None and rate2 is None:
+                self.load_stats["rows_skipped"] += 1
+                continue
+
+            # Parse date
+            entry_date = date.today()
+            if date_val:
+                date_val = str(date_val).strip()
+                # Try ISO format first
+                try:
+                    entry_date = datetime.fromisoformat(date_val.replace("Z", "+00:00")).date()
+                except ValueError:
+                    # Try other common formats
+                    for fmt in ["%Y-%m-%d", "%m/%d/%Y", "%m/%d/%y", "%Y%m%d"]:
+                        try:
+                            entry_date = datetime.strptime(date_val, fmt).date()
+                            break
+                        except ValueError:
+                            continue
+
+            key = (zip_code, hcpcs)
+            if key not in raw_data:
+                raw_data[key] = []
+
+            raw_data[key].append({"date": entry_date, "rate1": rate1, "rate2": rate2})
+
+            self.load_stats["unique_zips"].add(zip_code)
+            self.load_stats["unique_hcpcs"].add(hcpcs)
+
+        # Build rate ranges from raw data
+        self._build_rate_ranges(raw_data)
+
+        return {
+            "rows_processed": self.load_stats["rows_processed"],
+            "rows_skipped": self.load_stats["rows_skipped"],
+            "unique_zips": len(self.load_stats["unique_zips"]),
+            "unique_hcpcs": len(self.load_stats["unique_hcpcs"]),
+            "rate_keys": len(self.rate_ranges),
+            "source": "google_sheet",
+        }
+
+    def load(self, source: str) -> dict:
+        """
+        Load rate data from either a local Excel file, Google Sheet URL, or .gsheet file.
+
+        Automatically detects the source type based on the input.
+
+        Args:
+            source: Either a local file path (.xlsx/.gsheet) or Google Sheet URL/ID
+
+        Returns:
+            dict with load statistics
+
+        Raises:
+            ValueError: If source type cannot be determined
+            Exception: If loading fails
+        """
+        if not source:
+            raise ValueError("No rate source specified")
+
+        source = source.strip()
+
+        # Check if it's a .gsheet file (Google Drive for Desktop shortcut)
+        if source.lower().endswith(".gsheet"):
+            logger.info("Detected .gsheet file, reading Google Sheet URL from: %s", source)
+            sheet_url = read_gsheet_file(source)
+            if not sheet_url:
+                raise ValueError(f"Could not read Google Sheet URL from .gsheet file: {source}")
+            logger.info("Found Google Sheet URL: %s", sheet_url)
+            return self.load_from_google_sheet(sheet_url)
+
+        # Check if it's a Google Sheet URL or ID
+        if is_google_sheet(source):
+            logger.info("Detected Google Sheet source")
+            return self.load_from_google_sheet(source)
+
+        # Otherwise treat as local file
+        if not source.lower().endswith(".xlsx"):
+            logger.warning("Source doesn't end with .xlsx, attempting to load as Excel anyway: %s", source)
+
+        logger.info("Loading from local Excel file: %s", source)
+        return self.load_from_excel(source)
 
     def _build_rate_ranges(self, raw_data: Dict[Tuple[int, str], List[dict]]):
         """
