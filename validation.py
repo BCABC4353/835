@@ -3861,16 +3861,22 @@ class ZeroFailValidator:
             "other_issues": dict(result["other_issues"]),
         }
 
-    def _get_sample_errors(self, csv_rows: List[dict], max_samples: int = 5) -> List[Dict]:
-        """Get sample errors with redacted data"""
+    def _get_sample_errors(self, csv_rows: List[dict], max_samples: int = None) -> List[Dict]:
+        """Get error context samples with redacted data (no truncation by default)."""
         samples = []
-        for error in self.errors[:max_samples]:
+        # Build quick lookup to avoid O(n*m) scans for large error lists
+        claim_index = {}
+        for row in csv_rows:
+            claim_id = row.get("CLM_PatientControlNumber_L2100_CLP")
+            if claim_id and claim_id not in claim_index:
+                claim_index[claim_id] = row
+
+        errors_to_process = self.errors if max_samples is None else self.errors[:max_samples]
+        for error in errors_to_process:
             sample = {"error": error.to_dict(), "context": {}}
             if error.location:
                 claim_id = error.location.split(",")[0].replace("Claim ", "")
-                matching_row = next(
-                    (r for r in csv_rows if r.get("CLM_PatientControlNumber_L2100_CLP") == claim_id), None
-                )
+                matching_row = claim_index.get(claim_id)
                 if matching_row:
                     if error.type == "CALC":
                         sample["context"] = {
@@ -4149,7 +4155,7 @@ def generate_text_report(validation_result: Dict, redact: bool = True) -> str:
         for error_type, errors in validation_result["errors_by_type"].items():
             lines.append(f"\n{error_type} Errors ({len(errors)} found):")
             lines.append("-" * 40)
-            for i, error in enumerate(errors[:10], 1):
+            for i, error in enumerate(errors, 1):
                 lines.append(f"{i}. {error.get('message', 'Unknown error')}")
                 if error.get("location"):
                     lines.append(f"   Location: {error['location']}")
@@ -4162,22 +4168,18 @@ def generate_text_report(validation_result: Dict, redact: bool = True) -> str:
                     for seg in error["edi_context"]:
                         lines.append(f"      {seg}")
                 lines.append("")
-            if len(errors) > 10:
-                lines.append(f"   ... and {len(errors) - 10} more {error_type} errors")
         lines.append("")
         lines.append("-" * 80)
     if validation_result.get("warnings"):
         lines.append("WARNINGS")
         lines.append("-" * 80)
-        for i, warning in enumerate(validation_result["warnings"][:20], 1):
+        for i, warning in enumerate(validation_result["warnings"], 1):
             lines.append(f"{i}. {warning.get('message', 'Unknown warning')}")
             if warning.get("location"):
                 lines.append(f"   Location: {warning['location']}")
             if warning.get("actual"):
                 lines.append(f"   Details: {warning['actual']}")
             lines.append("")
-        if len(validation_result["warnings"]) > 20:
-            lines.append(f"   ... and {len(validation_result['warnings']) - 20} more warnings")
         lines.append("")
         lines.append("-" * 80)
     if validation_result.get("missing_mappings"):
@@ -4194,9 +4196,7 @@ def generate_text_report(validation_result: Dict, redact: bool = True) -> str:
             for field, codes in by_field.items():
                 unique_codes = list(set(codes))
                 lines.append(f"Field: {field}")
-                lines.append(f"Missing Codes: {', '.join(unique_codes[:5])}")
-                if len(unique_codes) > 5:
-                    lines.append(f"   ... and {len(unique_codes) - 5} more")
+                lines.append(f"Missing Codes: {', '.join(unique_codes)}")
                 lines.append("")
         lines.append("-" * 80)
     if validation_result.get("payers_missing_mileage_units"):
@@ -4261,9 +4261,7 @@ def generate_text_report(validation_result: Dict, redact: bool = True) -> str:
             for code, payers in sorted(carc_data.items()):
                 payer_list = list(payers.keys()) if isinstance(payers, dict) else list(payers)
                 lines.append(f"  Code: {code}")
-                lines.append(f"    Payers: {', '.join(payer_list[:5])}")
-                if len(payer_list) > 5:
-                    lines.append(f"    ... and {len(payer_list) - 5} more payers")
+                lines.append(f"    Payers: {', '.join(payer_list)}")
             lines.append("")
         # Missing RARC codes
         if quality_issues.get("missing_rarc_codes"):
@@ -4273,9 +4271,7 @@ def generate_text_report(validation_result: Dict, redact: bool = True) -> str:
             for code, payers in sorted(rarc_data.items()):
                 payer_list = list(payers.keys()) if isinstance(payers, dict) else list(payers)
                 lines.append(f"  Code: {code}")
-                lines.append(f"    Payers: {', '.join(payer_list[:5])}")
-                if len(payer_list) > 5:
-                    lines.append(f"    ... and {len(payer_list) - 5} more payers")
+                lines.append(f"    Payers: {', '.join(payer_list)}")
             lines.append("")
         # Missing dictionary entries
         if quality_issues.get("missing_dictionary_entries"):
@@ -4285,19 +4281,15 @@ def generate_text_report(validation_result: Dict, redact: bool = True) -> str:
             for entry_type, entries in sorted(dict_data.items()):
                 entry_list = list(entries.keys()) if isinstance(entries, dict) else list(entries)
                 lines.append(f"  Type: {entry_type}")
-                lines.append(f"    Missing: {', '.join(str(e) for e in entry_list[:10])}")
-                if len(entry_list) > 10:
-                    lines.append(f"    ... and {len(entry_list) - 10} more entries")
+                lines.append(f"    Missing: {', '.join(str(e) for e in entry_list)}")
             lines.append("")
         # Unrecognized date formats
         if quality_issues.get("unrecognized_date_formats"):
             lines.append("UNRECOGNIZED DATE FORMATS:")
             lines.append("-" * 40)
             date_data = quality_issues["unrecognized_date_formats"]
-            for date_val, count in sorted(date_data.items(), key=lambda x: x[1], reverse=True)[:10]:
+            for date_val, count in sorted(date_data.items(), key=lambda x: x[1], reverse=True):
                 lines.append(f"  '{date_val}' - {count} occurrence(s)")
-            if len(date_data) > 10:
-                lines.append(f"  ... and {len(date_data) - 10} more formats")
             lines.append("")
         # Transaction balance skips
         if quality_issues.get("transaction_balance_skips"):
@@ -4316,10 +4308,8 @@ def generate_text_report(validation_result: Dict, redact: bool = True) -> str:
             lines.append("DUPLICATE CLAIMS DETECTED:")
             lines.append("-" * 40)
             dup_data = quality_issues["duplicate_claims"]
-            for claim_id, count in sorted(dup_data.items(), key=lambda x: x[1], reverse=True)[:10]:
+            for claim_id, count in sorted(dup_data.items(), key=lambda x: x[1], reverse=True):
                 lines.append(f"  Claim {claim_id}: {count} occurrence(s)")
-            if len(dup_data) > 10:
-                lines.append(f"  ... and {len(dup_data) - 10} more duplicates")
             lines.append("")
         # Other issues not categorized above
         if quality_issues.get("other_issues"):
@@ -4448,6 +4438,12 @@ def generate_html_report(validation_result: Dict, redact: bool = True) -> str:
     <h2 class="{status_class}">Status: {summary['validation_status']}</h2>
     <p>Generated: {validation_result.get('validation_timestamp', '')}</p>
 """)
+    # Include executive dashboard (verbatim) for complete diagnostic detail
+    dashboard_text = generate_executive_dashboard(validation_result)
+    html_parts.append(f"""
+    <h3>Executive Dashboard</h3>
+    <pre class="code-sample">{html.escape(dashboard_text)}</pre>
+""")
     html_parts.append("""
     <h3>Validation Summary</h3>
     <table class="summary-table">
@@ -4508,7 +4504,7 @@ def generate_html_report(validation_result: Dict, redact: bool = True) -> str:
         <div style="margin-bottom: 20px;">
             <h4>{html.escape(payer_key)} - {len(payer_warnings)} warning(s)</h4>
 """)
-            for _i, warning in enumerate(payer_warnings[:10], 1):
+            for _i, warning in enumerate(payer_warnings, 1):
                 location = warning.get("location") or ""
                 claim_id = ""
                 if location and "Claim ID:" in location:
@@ -4520,18 +4516,14 @@ def generate_html_report(validation_result: Dict, redact: bool = True) -> str:
                     html_parts.append(
                         f"                <strong style='color: #856404;'>Claim: {html.escape(claim_id)}</strong><br>"
                     )
+                if warning.get("message"):
+                    html_parts.append(f"                Message: {html.escape(str(warning['message']))}<br>")
                 if warning.get("location"):
                     html_parts.append(f"                Location: {html.escape(warning['location'])}<br>")
                 if warning.get("actual"):
                     html_parts.append(f"Details: {html.escape(str(warning['actual']))}<br>")
                 html_parts.append("            </div>")
-            if len(payer_warnings) > 10:
-                html_parts.append(
-                    f"            <p style='margin-left: 20px;'>... and {len(payer_warnings) - 10} more warnings for this payer</p>"
-                )
             html_parts.append("        </div>")
-        if len(validation_result["warnings"]) > 20:
-            html_parts.append(f"        <p>... and {len(validation_result['warnings']) - 20} more warnings</p>")
     if validation_result.get("errors_by_type"):
         html_parts.append("""
     <h3>Errors by Type</h3>
@@ -4545,11 +4537,13 @@ def generate_html_report(validation_result: Dict, redact: bool = True) -> str:
     </button>
     <div class="content">
 """)
-            for _i, error in enumerate(errors[:20], 1):
+            for _i, error in enumerate(errors, 1):
                 html_parts.append("""
         <div class="error-box">
             <strong>
 """)
+                if error.get("message"):
+                    html_parts.append(f"Message: {html.escape(error['message'])}<br>")
                 if error.get("location"):
                     html_parts.append(f"Location: {html.escape(error['location'])}<br>")
                 if error.get("field"):
@@ -4557,9 +4551,15 @@ def generate_html_report(validation_result: Dict, redact: bool = True) -> str:
                 if error.get("expected") is not None and error.get("actual") is not None:
                     html_parts.append(f"Expected: <code>{html.escape(str(error['expected']))}</code>, ")
                     html_parts.append(f"Actual: <code>{html.escape(str(error['actual']))}</code><br>")
+                if error.get("edi_context"):
+                    html_parts.append("<br><strong>Source EDI Data:</strong><br>")
+                    html_parts.append(
+                        '<pre style="background-color: #f8f9fa; padding: 10px; border-radius: 5px; overflow-x: auto; white-space: pre-wrap;">'
+                    )
+                    for seg in error["edi_context"]:
+                        html_parts.append(html.escape(str(seg)) + "\n")
+                    html_parts.append("</pre>")
                 html_parts.append("        </div>")
-            if len(errors) > 20:
-                html_parts.append(f"        <p>... and {len(errors) - 20} more {error_type} errors</p>")
             html_parts.append("    </div>")
     if validation_result.get("payers_missing_mileage_units"):
         html_parts.append("""
@@ -4622,9 +4622,7 @@ def generate_html_report(validation_result: Dict, redact: bool = True) -> str:
             for field, codes in by_field.items():
                 unique_codes = sorted(codes)
                 html_parts.append(f"        • {html.escape(field)}: ")
-                html_parts.append(f"<code>{html.escape(', '.join(unique_codes[:10]))}</code>")
-                if len(unique_codes) > 10:
-                    html_parts.append(f" ... and {len(unique_codes) - 10} more")
+                html_parts.append(f"<code>{html.escape(', '.join(unique_codes))}</code>")
                 html_parts.append("<br>")
             html_parts.append("    </div>")
     if validation_result.get("sample_errors"):
