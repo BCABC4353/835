@@ -20,6 +20,7 @@ a = Analysis(
         'openpyxl',
         'openpyxl.cell._writer',
         'openpyxl.styles.stylesheet',
+        'requests',
         'tkinter',
         'tkinter.ttk',
         'tkinter.filedialog',
