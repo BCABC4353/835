@@ -386,6 +386,29 @@ DISPLAY_COLUMN_NAMES = {
     "FH_OON_Final": "OUT OF NETWORK FINAL",
     "FH_IN_Final": "IN NETWORK FINAL",
     "FH_EffectiveUnits": "FAIR HEALTH UNITS USED",
+    # PLB Adjustment Descriptions (Provider Level)
+    "PLB_AdjustmentCount_PLB": "PLB ADJUSTMENT COUNT",
+    "PLB_Adj1_ReasonDesc_PLB": "PLB ADJ 1 REASON DESCRIPTION",
+    "PLB_Adj1_RefIDContext_PLB": "PLB ADJ 1 REF ID CONTEXT",
+    "PLB_Adj2_ReasonDesc_PLB": "PLB ADJ 2 REASON DESCRIPTION",
+    "PLB_Adj2_RefIDContext_PLB": "PLB ADJ 2 REF ID CONTEXT",
+    "PLB_Adj3_ReasonDesc_PLB": "PLB ADJ 3 REASON DESCRIPTION",
+    "PLB_Adj3_RefIDContext_PLB": "PLB ADJ 3 REF ID CONTEXT",
+    "PLB_Adj4_ReasonDesc_PLB": "PLB ADJ 4 REASON DESCRIPTION",
+    "PLB_Adj4_RefIDContext_PLB": "PLB ADJ 4 REF ID CONTEXT",
+    "PLB_Adj5_ReasonDesc_PLB": "PLB ADJ 5 REASON DESCRIPTION",
+    "PLB_Adj5_RefIDContext_PLB": "PLB ADJ 5 REF ID CONTEXT",
+    "PLB_Adj6_ReasonDesc_PLB": "PLB ADJ 6 REASON DESCRIPTION",
+    "PLB_Adj6_RefIDContext_PLB": "PLB ADJ 6 REF ID CONTEXT",
+    # Transaction Balance Diagnostics
+    # These fields help diagnose balance errors without access to raw EDI files
+    "TXN_ClaimCount_Diagnostic": "TXN CLAIM COUNT",
+    "TXN_SumCLP04_Diagnostic": "TXN SUM OF CLAIM PAYMENTS",
+    "TXN_SumPLB_Diagnostic": "TXN SUM OF PLB ADJUSTMENTS",
+    "TXN_ExpectedBPR02_Diagnostic": "TXN EXPECTED CHECK AMOUNT",
+    "TXN_ActualBPR02_Diagnostic": "TXN ACTUAL CHECK AMOUNT",
+    "TXN_BalanceDifference_Diagnostic": "TXN BALANCE DIFFERENCE",
+    "TXN_BalanceStatus_Diagnostic": "TXN BALANCE STATUS",
 }
 
 
@@ -2929,24 +2952,102 @@ def convert_segments_to_rows(segments, element_delimiter, file_name, component_d
             plb_total = calculate_plb_total(plb_adjustments)
             plb_details = format_plb_details(plb_adjustments, payer_key=payer_key)
 
+            # Calculate transaction-level balance diagnostics
+            # This helps diagnose balance errors without access to raw EDI
+            txn_claim_count = 0
+            txn_sum_clp04 = Decimal("0")
+            seen_claims = set()
+            for buffered_row in transaction_rows_buffer:
+                # Count unique claims (CLP segments)
+                claim_id = buffered_row.get("CLM_PayerControlNumber_L2100_CLP", "")
+                if claim_id and claim_id not in seen_claims:
+                    seen_claims.add(claim_id)
+                    txn_claim_count += 1
+                    # Sum CLP04 (claim payment amount) - only count once per claim
+                    try:
+                        clp04_val = buffered_row.get("CLM_PaymentAmount_L2100_CLP", "")
+                        if clp04_val:
+                            # Remove currency formatting if present
+                            clp04_clean = str(clp04_val).replace("$", "").replace(",", "").strip()
+                            if clp04_clean:
+                                txn_sum_clp04 += Decimal(clp04_clean)
+                    except (ValueError, TypeError, InvalidOperation):
+                        pass
+
+            # Calculate expected BPR02 per X12 835 Section 1.10.2.1.3
+            # Formula: BPR02 = Sum(CLP04) - Sum(PLB adjustments)
+            try:
+                plb_total_decimal = (
+                    Decimal(str(plb_total).replace("$", "").replace(",", "")) if plb_total else Decimal("0")
+                )
+            except (ValueError, TypeError, InvalidOperation):
+                plb_total_decimal = Decimal("0")
+
+            txn_expected_bpr02 = txn_sum_clp04 - plb_total_decimal
+
+            # Get actual BPR02 from check_amount
+            try:
+                txn_actual_bpr02 = (
+                    Decimal(str(check_amount).replace("$", "").replace(",", "")) if check_amount else Decimal("0")
+                )
+            except (ValueError, TypeError, InvalidOperation):
+                txn_actual_bpr02 = Decimal("0")
+
+            txn_balance_diff = txn_actual_bpr02 - txn_expected_bpr02
+
             for buffered_row in transaction_rows_buffer:
                 # Update PLB summary fields
                 buffered_row["PLB_TotalAdjustments_PLB"] = plb_total
                 buffered_row["PLB_Details_PLB"] = plb_details
+                buffered_row["PLB_AdjustmentCount_PLB"] = str(len(flat_plb_adjustments))
 
                 # Update individual PLB adjustment fields (up to 6 adjustments)
                 for i in range(6):
                     adj_num = i + 1
                     if i < len(flat_plb_adjustments):
                         adj = flat_plb_adjustments[i]
-                        buffered_row[f"PLB_Adj{adj_num}_ReasonCode_PLB"] = adj.get("reason_code", "")
-                        buffered_row[f"PLB_Adj{adj_num}_RefID_PLB"] = adj.get("reference_id", "")
+                        reason_code = adj.get("reason_code", "")
+                        reference_id = adj.get("reference_id", "")
+                        buffered_row[f"PLB_Adj{adj_num}_ReasonCode_PLB"] = reason_code
+                        buffered_row[f"PLB_Adj{adj_num}_ReasonDesc_PLB"] = (
+                            dictionary.get_plb_adjustment_code_description(reason_code) if reason_code else ""
+                        )
+                        buffered_row[f"PLB_Adj{adj_num}_RefID_PLB"] = reference_id
+                        buffered_row[f"PLB_Adj{adj_num}_RefIDContext_PLB"] = (
+                            dictionary.get_plb_reference_id_context(reason_code, reference_id) if reason_code else ""
+                        )
                         buffered_row[f"PLB_Adj{adj_num}_Amount_PLB"] = adj.get("amount", "")
                     else:
                         # Clear fields if no adjustment at this position
                         buffered_row[f"PLB_Adj{adj_num}_ReasonCode_PLB"] = ""
+                        buffered_row[f"PLB_Adj{adj_num}_ReasonDesc_PLB"] = ""
                         buffered_row[f"PLB_Adj{adj_num}_RefID_PLB"] = ""
+                        buffered_row[f"PLB_Adj{adj_num}_RefIDContext_PLB"] = ""
                         buffered_row[f"PLB_Adj{adj_num}_Amount_PLB"] = ""
+
+                # Add transaction-level balance diagnostic fields
+                # These help diagnose balance errors without access to raw EDI files
+                buffered_row["TXN_ClaimCount_Diagnostic"] = str(txn_claim_count)
+                buffered_row["TXN_SumCLP04_Diagnostic"] = str(
+                    txn_sum_clp04.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+                )
+                buffered_row["TXN_SumPLB_Diagnostic"] = str(
+                    plb_total_decimal.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+                )
+                buffered_row["TXN_ExpectedBPR02_Diagnostic"] = str(
+                    txn_expected_bpr02.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+                )
+                buffered_row["TXN_ActualBPR02_Diagnostic"] = str(
+                    txn_actual_bpr02.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+                )
+                buffered_row["TXN_BalanceDifference_Diagnostic"] = str(
+                    txn_balance_diff.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+                )
+                # Flag if there's a balance discrepancy (non-zero difference)
+                if abs(txn_balance_diff) > Decimal("0.01"):
+                    buffered_row["TXN_BalanceStatus_Diagnostic"] = "DISCREPANCY"
+                else:
+                    buffered_row["TXN_BalanceStatus_Diagnostic"] = "OK"
 
             # Add all buffered rows to main output
             rows.extend(transaction_rows_buffer)
@@ -3054,20 +3155,89 @@ def convert_segments_to_rows(segments, element_delimiter, file_name, component_d
         flat_plb_adjustments = flatten_plb_adjustments(plb_adjustments)
         plb_total = calculate_plb_total(plb_adjustments)
         plb_details = format_plb_details(plb_adjustments, payer_key=payer_key)
+
+        # Calculate transaction-level balance diagnostics for final transaction
+        txn_claim_count = 0
+        txn_sum_clp04 = Decimal("0")
+        seen_claims = set()
+        for buffered_row in transaction_rows_buffer:
+            claim_id = buffered_row.get("CLM_PayerControlNumber_L2100_CLP", "")
+            if claim_id and claim_id not in seen_claims:
+                seen_claims.add(claim_id)
+                txn_claim_count += 1
+                try:
+                    clp04_val = buffered_row.get("CLM_PaymentAmount_L2100_CLP", "")
+                    if clp04_val:
+                        clp04_clean = str(clp04_val).replace("$", "").replace(",", "").strip()
+                        if clp04_clean:
+                            txn_sum_clp04 += Decimal(clp04_clean)
+                except (ValueError, TypeError, InvalidOperation):
+                    pass
+
+        try:
+            plb_total_decimal = Decimal(str(plb_total).replace("$", "").replace(",", "")) if plb_total else Decimal("0")
+        except (ValueError, TypeError, InvalidOperation):
+            plb_total_decimal = Decimal("0")
+
+        txn_expected_bpr02 = txn_sum_clp04 - plb_total_decimal
+
+        try:
+            txn_actual_bpr02 = (
+                Decimal(str(check_amount).replace("$", "").replace(",", "")) if check_amount else Decimal("0")
+            )
+        except (ValueError, TypeError, InvalidOperation):
+            txn_actual_bpr02 = Decimal("0")
+
+        txn_balance_diff = txn_actual_bpr02 - txn_expected_bpr02
+
         for buffered_row in transaction_rows_buffer:
             buffered_row["PLB_TotalAdjustments_PLB"] = plb_total
             buffered_row["PLB_Details_PLB"] = plb_details
+            buffered_row["PLB_AdjustmentCount_PLB"] = str(len(flat_plb_adjustments))
             for i in range(6):
                 adj_num = i + 1
                 if i < len(flat_plb_adjustments):
                     adj = flat_plb_adjustments[i]
-                    buffered_row[f"PLB_Adj{adj_num}_ReasonCode_PLB"] = adj.get("reason_code", "")
-                    buffered_row[f"PLB_Adj{adj_num}_RefID_PLB"] = adj.get("reference_id", "")
+                    reason_code = adj.get("reason_code", "")
+                    reference_id = adj.get("reference_id", "")
+                    buffered_row[f"PLB_Adj{adj_num}_ReasonCode_PLB"] = reason_code
+                    buffered_row[f"PLB_Adj{adj_num}_ReasonDesc_PLB"] = (
+                        dictionary.get_plb_adjustment_code_description(reason_code) if reason_code else ""
+                    )
+                    buffered_row[f"PLB_Adj{adj_num}_RefID_PLB"] = reference_id
+                    buffered_row[f"PLB_Adj{adj_num}_RefIDContext_PLB"] = (
+                        dictionary.get_plb_reference_id_context(reason_code, reference_id) if reason_code else ""
+                    )
                     buffered_row[f"PLB_Adj{adj_num}_Amount_PLB"] = adj.get("amount", "")
                 else:
                     buffered_row[f"PLB_Adj{adj_num}_ReasonCode_PLB"] = ""
+                    buffered_row[f"PLB_Adj{adj_num}_ReasonDesc_PLB"] = ""
                     buffered_row[f"PLB_Adj{adj_num}_RefID_PLB"] = ""
+                    buffered_row[f"PLB_Adj{adj_num}_RefIDContext_PLB"] = ""
                     buffered_row[f"PLB_Adj{adj_num}_Amount_PLB"] = ""
+
+            # Add transaction-level balance diagnostic fields
+            buffered_row["TXN_ClaimCount_Diagnostic"] = str(txn_claim_count)
+            buffered_row["TXN_SumCLP04_Diagnostic"] = str(
+                txn_sum_clp04.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+            )
+            buffered_row["TXN_SumPLB_Diagnostic"] = str(
+                plb_total_decimal.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+            )
+            buffered_row["TXN_ExpectedBPR02_Diagnostic"] = str(
+                txn_expected_bpr02.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+            )
+            buffered_row["TXN_ActualBPR02_Diagnostic"] = str(
+                txn_actual_bpr02.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+            )
+            buffered_row["TXN_BalanceDifference_Diagnostic"] = str(
+                txn_balance_diff.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+            )
+            if abs(txn_balance_diff) > Decimal("0.01"):
+                buffered_row["TXN_BalanceStatus_Diagnostic"] = "DISCREPANCY"
+            else:
+                buffered_row["TXN_BalanceStatus_Diagnostic"] = "OK"
+
         rows.extend(transaction_rows_buffer)
 
     if current_transaction and current_transaction["claims"]:
@@ -4205,44 +4375,90 @@ def create_output_row(
         "PLB_Details_PLB": format_plb_details(plb_adjustments, payer_key=payer_key),
         "PLB_ProviderID_PLB": plb_adjustments[0].get("provider_identifier", "") if plb_adjustments else "",
         "PLB_FiscalPeriodDate_PLB": plb_adjustments[0].get("fiscal_period_date", "") if plb_adjustments else "",
+        "PLB_AdjustmentCount_PLB": "",  # Will be backfilled during SE processing
         # PLB occurrence fields with composite sub-elements
         # Note: flat_plb_adjustments contains individual adjustments from all PLB segments
         "PLB_Adj1_ReasonCode_PLB": flat_plb_adjustments[0].get("reason_code", "")
         if len(flat_plb_adjustments) > 0
         else "",
+        "PLB_Adj1_ReasonDesc_PLB": dictionary.get_plb_adjustment_code_description(
+            flat_plb_adjustments[0].get("reason_code", "")
+        )
+        if len(flat_plb_adjustments) > 0 and flat_plb_adjustments[0].get("reason_code", "")
+        else "",
         "PLB_Adj1_RefQualifier_PLB": "",  # This would need to be parsed if qualifier is sent separately
         "PLB_Adj1_RefID_PLB": flat_plb_adjustments[0].get("reference_id", "") if len(flat_plb_adjustments) > 0 else "",
+        "PLB_Adj1_RefIDContext_PLB": "",  # Will be backfilled during SE processing
         "PLB_Adj1_Amount_PLB": flat_plb_adjustments[0].get("amount", "") if len(flat_plb_adjustments) > 0 else "",
         "PLB_Adj2_ReasonCode_PLB": flat_plb_adjustments[1].get("reason_code", "")
         if len(flat_plb_adjustments) > 1
         else "",
+        "PLB_Adj2_ReasonDesc_PLB": dictionary.get_plb_adjustment_code_description(
+            flat_plb_adjustments[1].get("reason_code", "")
+        )
+        if len(flat_plb_adjustments) > 1 and flat_plb_adjustments[1].get("reason_code", "")
+        else "",
         "PLB_Adj2_RefQualifier_PLB": "",  # This would need to be parsed if qualifier is sent separately
         "PLB_Adj2_RefID_PLB": flat_plb_adjustments[1].get("reference_id", "") if len(flat_plb_adjustments) > 1 else "",
+        "PLB_Adj2_RefIDContext_PLB": "",  # Will be backfilled during SE processing
         "PLB_Adj2_Amount_PLB": flat_plb_adjustments[1].get("amount", "") if len(flat_plb_adjustments) > 1 else "",
         "PLB_Adj3_ReasonCode_PLB": flat_plb_adjustments[2].get("reason_code", "")
         if len(flat_plb_adjustments) > 2
         else "",
+        "PLB_Adj3_ReasonDesc_PLB": dictionary.get_plb_adjustment_code_description(
+            flat_plb_adjustments[2].get("reason_code", "")
+        )
+        if len(flat_plb_adjustments) > 2 and flat_plb_adjustments[2].get("reason_code", "")
+        else "",
         "PLB_Adj3_RefQualifier_PLB": "",  # This would need to be parsed if qualifier is sent separately
         "PLB_Adj3_RefID_PLB": flat_plb_adjustments[2].get("reference_id", "") if len(flat_plb_adjustments) > 2 else "",
+        "PLB_Adj3_RefIDContext_PLB": "",  # Will be backfilled during SE processing
         "PLB_Adj3_Amount_PLB": flat_plb_adjustments[2].get("amount", "") if len(flat_plb_adjustments) > 2 else "",
         "PLB_Adj4_ReasonCode_PLB": flat_plb_adjustments[3].get("reason_code", "")
         if len(flat_plb_adjustments) > 3
         else "",
+        "PLB_Adj4_ReasonDesc_PLB": dictionary.get_plb_adjustment_code_description(
+            flat_plb_adjustments[3].get("reason_code", "")
+        )
+        if len(flat_plb_adjustments) > 3 and flat_plb_adjustments[3].get("reason_code", "")
+        else "",
         "PLB_Adj4_RefQualifier_PLB": "",  # This would need to be parsed if qualifier is sent separately
         "PLB_Adj4_RefID_PLB": flat_plb_adjustments[3].get("reference_id", "") if len(flat_plb_adjustments) > 3 else "",
+        "PLB_Adj4_RefIDContext_PLB": "",  # Will be backfilled during SE processing
         "PLB_Adj4_Amount_PLB": flat_plb_adjustments[3].get("amount", "") if len(flat_plb_adjustments) > 3 else "",
         "PLB_Adj5_ReasonCode_PLB": flat_plb_adjustments[4].get("reason_code", "")
         if len(flat_plb_adjustments) > 4
         else "",
+        "PLB_Adj5_ReasonDesc_PLB": dictionary.get_plb_adjustment_code_description(
+            flat_plb_adjustments[4].get("reason_code", "")
+        )
+        if len(flat_plb_adjustments) > 4 and flat_plb_adjustments[4].get("reason_code", "")
+        else "",
         "PLB_Adj5_RefQualifier_PLB": "",  # This would need to be parsed if qualifier is sent separately
         "PLB_Adj5_RefID_PLB": flat_plb_adjustments[4].get("reference_id", "") if len(flat_plb_adjustments) > 4 else "",
+        "PLB_Adj5_RefIDContext_PLB": "",  # Will be backfilled during SE processing
         "PLB_Adj5_Amount_PLB": flat_plb_adjustments[4].get("amount", "") if len(flat_plb_adjustments) > 4 else "",
         "PLB_Adj6_ReasonCode_PLB": flat_plb_adjustments[5].get("reason_code", "")
         if len(flat_plb_adjustments) > 5
         else "",
+        "PLB_Adj6_ReasonDesc_PLB": dictionary.get_plb_adjustment_code_description(
+            flat_plb_adjustments[5].get("reason_code", "")
+        )
+        if len(flat_plb_adjustments) > 5 and flat_plb_adjustments[5].get("reason_code", "")
+        else "",
         "PLB_Adj6_RefQualifier_PLB": "",  # This would need to be parsed if qualifier is sent separately
         "PLB_Adj6_RefID_PLB": flat_plb_adjustments[5].get("reference_id", "") if len(flat_plb_adjustments) > 5 else "",
+        "PLB_Adj6_RefIDContext_PLB": "",  # Will be backfilled during SE processing
         "PLB_Adj6_Amount_PLB": flat_plb_adjustments[5].get("amount", "") if len(flat_plb_adjustments) > 5 else "",
+        # Transaction-level balance diagnostic fields (backfilled during SE processing)
+        # These help diagnose balance errors without access to raw EDI files
+        "TXN_ClaimCount_Diagnostic": "",
+        "TXN_SumCLP04_Diagnostic": "",
+        "TXN_SumPLB_Diagnostic": "",
+        "TXN_ExpectedBPR02_Diagnostic": "",
+        "TXN_ActualBPR02_Diagnostic": "",
+        "TXN_BalanceDifference_Diagnostic": "",
+        "TXN_BalanceStatus_Diagnostic": "",
         "LX_Number_L2000_LX": claim.get("lx_header", {}).get("header_number", "") if claim.get("lx_header") else "",
         # TS3 segment is primarily for institutional provider summaries - not used for professional claims
         # 'TS3_ProviderID_L2000_TS3': claim.get('ts3', {}).get('provider_identifier', '') if claim.get('ts3') else '',

@@ -3644,6 +3644,99 @@ def get_plb_adjustment_code_description(code):
     return plb_map.get(code, f"Unknown PLB Code: {code}")
 
 
+def get_plb_reference_id_context(reason_code, reference_id=""):
+    """
+    Get context description for a PLB Reference ID based on the adjustment reason code.
+
+    The Reference ID in PLB adjustments means different things depending on the reason:
+    - FB (Forward Balance): TRN02 trace number from original transaction
+    - LS (Lump Sum): Program identifier or batch reference (e.g., EMT supplement program)
+    - WO/B2/B3 (Overpayment/Refund): Original claim control number or ICN
+    - 72 (Authorized Return): Provider's refund check number
+    - L6 (Interest): Reference to the claim or period the interest covers
+    - CS (Adjustment): Reference to the check being reissued or FB being reduced
+
+    Args:
+        reason_code: The PLB adjustment reason code (e.g., "LS", "FB", "WO")
+        reference_id: The actual reference ID value (for additional context)
+
+    Returns:
+        A description of what the Reference ID represents
+    """
+    if not reason_code:
+        return ""
+
+    context_map = {
+        "50": "Penalty reference or period",
+        "51": "Sequestration period reference",
+        "72": "Provider's returned check number",
+        "90": "Early payment discount reference",
+        "AH": "Origination fee reference",
+        "AK": "Previous levy reference",
+        "AM": "Patient account reference",
+        "AP": "Accelerated payment reference",
+        "B2": "Original payment trace number (unauthorized payment)",
+        "B3": "Original claim/payment reference (overpayment returned)",
+        "BD": "Bad debt claim reference",
+        "BN": "Bonus program identifier",
+        "C5": "Temporary allowance period",
+        "CR": "Capitation period reference",
+        "CS": "Original check trace number (reissue) or FB reference",
+        "CT": "Capitation period reference",
+        "CV": "Capital passthrough reference",
+        "CW": "CRNA passthrough reference",
+        "DI": "Deficit reduction period",
+        "DM": "Medical education period reference",
+        "E3": "Withholding program reference",
+        "FB": "Original transaction trace number (TRN02) - tracks balance across remittances",
+        "FC": "Fund allocation reference",
+        "G2": "Geographic adjustment reference",
+        "GO": "Graduate medical education reference",
+        "HM": "Hearing/vision services reference",
+        "IP": "Incentive program identifier",
+        "IR": "IRS withholding reference",
+        "IS": "Interim settlement period",
+        "J1": "Nonreimbursable costs reference",
+        "L3": "Penalty reference",
+        "L6": "Interest period or claim reference",
+        "LE": "Levy reference number",
+        "LS": "Supplemental payment program ID (e.g., EMT/ambulance supplement batch)",
+        "OA": "Affiliated provider offset reference",
+        "OB": "Non-affiliated provider offset reference",
+        "PI": "Payer initiated reduction reference",
+        "PL": "Final payment reference",
+        "PS": "Provider settlement reference",
+        "RA": "Retro adjustment period or claim reference",
+        "RC": "Recovery claim or period reference",
+        "RE": "Return on equity period",
+        "RF": "Refund reference",
+        "SL": "Student loan reference",
+        "SM": "State mandate reference",
+        "T2": "Temporary adjustment reference",
+        "TL": "Third party liability claim reference",
+        "WA": "Waiver adjustment reference",
+        "WO": "Original claim control number (ICN) being recovered",
+        "WR": "Wrap payment reference",
+        "WU": "Unspecified recovery reference",
+        "ZZ": "Trading partner defined reference",
+    }
+
+    context = context_map.get(reason_code, "Reference identifier")
+
+    # Add specific hints for common eMedNY scenarios
+    if reason_code == "LS" and reference_id:
+        # eMedNY uses LS for state-initiated supplemental payments
+        return f"{context} - Value: {reference_id}"
+    elif reason_code == "FB" and reference_id:
+        # Forward balance references the original transaction
+        return f"{context} - Original TRN: {reference_id}"
+    elif reason_code in ("WO", "B2", "B3") and reference_id:
+        # Recovery references original claim
+        return f"{context} - Original: {reference_id}"
+
+    return context
+
+
 def get_amount_qualifier_description(code):
     amt_map = {
         "AU": "Coverage Amount - Amount of coverage",
