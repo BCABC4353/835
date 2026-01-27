@@ -21,6 +21,7 @@ from typing import Any, Dict, List
 
 import colloquial
 import dictionary
+import redactor
 from categorization import categorize_adjustment
 
 # Configure module logger
@@ -803,13 +804,6 @@ class ZeroFailValidator:
             "payer_data_quality_issues": defaultdict(lambda: defaultdict(int)),
             "priority_rarc_codes": defaultdict(lambda: defaultdict(int)),  # Track payer-specific priority RARC codes
         }
-        self.transaction_balance_tolerances = {
-            "PROSPECT MEDICAL SYSTEMS": Decimal("10.00"),
-            "PROSPECT HEALTH SOURCE": Decimal("10.00"),
-            "PROSPECT MEDICAL SD": Decimal("10.00"),
-            "PROSPECT MEDICAL": Decimal("10.00"),
-            "EMPLOYERS MUTUAL": Decimal("1000.00"),
-        }
         self.current_file_idx = 0  # Track current file for payer key lookup
 
     def _should_debug(self, payer_name: str, error_type: str) -> bool:
@@ -822,13 +816,21 @@ class ZeroFailValidator:
         return True
 
     def _get_transaction_tolerance(self, payer_name: str) -> Decimal:
-        """Return payer-specific tolerance for transaction balancing."""
+        """
+        Return payer-specific tolerance for transaction balancing.
+
+        Uses colloquial.py to look up payer-specific tolerance.
+        Default is $0.01 per X12 standard.
+        """
         if not payer_name:
             return Decimal("0.01")
-        upper_name = payer_name.upper()
-        for key, tolerance in self.transaction_balance_tolerances.items():
-            if key in upper_name:
-                return tolerance
+
+        # Try to identify the payer via colloquial
+        identified_payer = colloquial.identify_payer(payer_name=payer_name)
+        if identified_payer:
+            tolerance = colloquial.get_transaction_balance_tolerance(identified_payer)
+            return Decimal(str(tolerance))
+
         return Decimal("0.01")
 
     def _build_transaction_balance_context(
@@ -1127,6 +1129,215 @@ class ZeroFailValidator:
         context.append(f"  Claim Status: {claim_row.get('CLM_Status_L2100_CLP', 'N/A')}")
         context.append(f"  Patient Name: {claim_row.get('Patient_Name_L2100_NM1', 'N/A')}")
         context.append(f"  Service Date: {claim_row.get('CLM_ServiceStartDate_L2100_DTM', 'N/A')}")
+        context.append("")
+
+        return context
+
+    def _build_allowed_amount_context(
+        self,
+        claim_id: str,
+        claim_row: dict,
+        svc_row: dict,
+        svc_method1: float,
+        svc_method2: float,
+        claim_status: str,
+    ) -> List[str]:
+        """
+        Build comprehensive debugging context for allowed amount validation issues.
+
+        Returns a list of formatted strings showing:
+        - Calculation breakdown with formulas
+        - Service-level charge, payment, and adjustments
+        - Claim context (status, payer, etc.)
+        - Possible explanations based on claim status
+        """
+        context = []
+
+        # === CALCULATION BREAKDOWN ===
+        context.append("=" * 60)
+        context.append("ALLOWED AMOUNT CALCULATION BREAKDOWN")
+        context.append("=" * 60)
+        context.append("")
+        context.append("Two methods to calculate allowed amount should match per X12 835 Section 1.10.2.1.1:")
+        context.append("  Method 1: Charge - (CO + OA + PI adjustments) = Allowed")
+        context.append("            Parser subtracts: Contractual, COB, Sequestration, HCRA, OtherAdj, Denied, QMB")
+        context.append("  Method 2: Payment + (PR + NC adjustments) = Allowed")
+        context.append("            Parser adds: Deductible, Coinsurance, Copay, PR_NonCovered, OtherPatientResp")
+        context.append("")
+
+        svc_charge = self._parse_currency(svc_row.get("SVC_ChargeAmount_L2110_SVC", 0))
+        svc_payment = self._parse_currency(svc_row.get("SVC_PaymentAmount_L2110_SVC", 0))
+        proc = svc_row.get("SVC_ProcedureCode_L2110_SVC", "Unknown")
+
+        # Check for payer-stated allowed amount (AMT*B6) - informational per X12 TR3
+        payer_allowed = svc_row.get("SVC_AllowedAmount_L2110_AMT", "")
+
+        context.append(f"  Service: {proc}")
+        context.append(f"  Charge:  ${svc_charge:.2f}")
+        context.append(f"  Payment: ${svc_payment:.2f}")
+        if payer_allowed:
+            try:
+                payer_allowed_val = self._parse_currency(payer_allowed)
+                context.append(f"  Payer-Stated Allowed (AMT*B6): ${payer_allowed_val:.2f}")
+            except (ValueError, TypeError):
+                context.append(f"  Payer-Stated Allowed (AMT*B6): {payer_allowed}")
+        context.append("")
+        context.append(f"  Method 1 Result (Charge-CO): ${svc_method1:.2f}")
+        context.append(f"  Method 2 Result (Payment+PR): ${svc_method2:.2f}")
+        context.append(f"  DIFFERENCE: ${abs(svc_method1 - svc_method2):.2f}")
+        context.append("")
+
+        # === RAW CAS SEGMENTS ===
+        context.append("=" * 60)
+        context.append("RAW SERVICE-LEVEL ADJUSTMENTS (CAS)")
+        context.append("=" * 60)
+        co_total = 0.0
+        pr_total = 0.0
+        oa_total = 0.0
+        pi_total = 0.0
+        for cas_idx in range(1, 6):
+            cas_group = svc_row.get(f"SVC_CAS{cas_idx}_Group_L2110_CAS", "")
+            cas_code = svc_row.get(f"SVC_CAS{cas_idx}_Code_L2110_CAS", "")
+            cas_amt_str = svc_row.get(f"SVC_CAS{cas_idx}_Amount_L2110_CAS", "")
+            if cas_group and cas_amt_str:
+                try:
+                    cas_amt = self._parse_currency(cas_amt_str)
+                    context.append(f"  CAS {cas_idx}: Group={cas_group}, Code={cas_code}, Amount=${cas_amt:.2f}")
+                    if cas_group == "CO":
+                        co_total += cas_amt
+                    elif cas_group == "PR":
+                        pr_total += cas_amt
+                    elif cas_group == "OA":
+                        oa_total += cas_amt
+                    elif cas_group == "PI":
+                        pi_total += cas_amt
+                except (ValueError, TypeError):
+                    context.append(
+                        f"  CAS {cas_idx}: Group={cas_group}, Code={cas_code}, Amount={cas_amt_str} (PARSE ERROR)"
+                    )
+
+        context.append("")
+        context.append(f"  CO Total: ${co_total:.2f}")
+        context.append(f"  PR Total: ${pr_total:.2f}")
+        context.append(f"  OA Total: ${oa_total:.2f}")
+        context.append(f"  PI Total: ${pi_total:.2f}")
+        context.append("")
+
+        # === PARSER'S CATEGORIZED VALUES ===
+        context.append("=" * 60)
+        context.append("PARSER'S CATEGORIZED ADJUSTMENTS (from CSV)")
+        context.append("=" * 60)
+        context.append("  Method 1 subtracts (non-collectible):")
+        contractual = self._parse_currency(svc_row.get("SVC_Contractual_L2110_CAS", 0))
+        cob = self._parse_currency(svc_row.get("SVC_COB_L2110_CAS", 0))
+        sequestration = self._parse_currency(svc_row.get("SVC_Sequestration_L2110_CAS", 0))
+        hcra = self._parse_currency(svc_row.get("SVC_HCRA_L2110_CAS", 0))
+        other_adj_val = self._parse_currency(svc_row.get("SVC_OtherAdjustments_L2110_CAS", 0))
+        denied = self._parse_currency(svc_row.get("SVC_Denied_L2110_CAS", 0))
+        qmb = self._parse_currency(svc_row.get("SVC_QMB_L2110_CAS", 0))
+        context.append(f"    Contractual: ${contractual:.2f}")
+        context.append(f"    COB: ${cob:.2f}")
+        context.append(f"    Sequestration: ${sequestration:.2f}")
+        context.append(f"    HCRA: ${hcra:.2f}")
+        context.append(f"    OtherAdjustments: ${other_adj_val:.2f}")
+        context.append(f"    Denied: ${denied:.2f}")
+        context.append(f"    QMB: ${qmb:.2f}")
+        method1_adj_total = contractual + cob + sequestration + hcra + other_adj_val + denied + qmb
+        context.append(f"    TOTAL SUBTRACTED: ${method1_adj_total:.2f}")
+        context.append("")
+        context.append("  Method 2 adds (patient responsibility):")
+        deductible = self._parse_currency(svc_row.get("SVC_Deductible_L2110_CAS", 0))
+        coinsurance = self._parse_currency(svc_row.get("SVC_Coinsurance_L2110_CAS", 0))
+        copay = self._parse_currency(svc_row.get("SVC_Copay_L2110_CAS", 0))
+        pr_noncovered = self._parse_currency(svc_row.get("Patient_NonCovered", 0))
+        other_pr = self._parse_currency(svc_row.get("Patient_OtherResp", 0))
+        context.append(f"    Deductible: ${deductible:.2f}")
+        context.append(f"    Coinsurance: ${coinsurance:.2f}")
+        context.append(f"    Copay: ${copay:.2f}")
+        context.append(f"    PR_NonCovered: ${pr_noncovered:.2f}")
+        context.append(f"    OtherPatientResp: ${other_pr:.2f}")
+        method2_adj_total = deductible + coinsurance + copay + pr_noncovered + other_pr
+        context.append(f"    TOTAL ADDED: ${method2_adj_total:.2f}")
+        context.append("")
+
+        # === VERIFY FORMULA ===
+        context.append("=" * 60)
+        context.append("FORMULA VERIFICATION")
+        context.append("=" * 60)
+        recalc_method1 = svc_charge - method1_adj_total
+        recalc_method2 = svc_payment + method2_adj_total
+        context.append(f"  Recalculated Method 1: ${svc_charge:.2f} - ${method1_adj_total:.2f} = ${recalc_method1:.2f}")
+        context.append(
+            f"  Recalculated Method 2: ${svc_payment:.2f} + ${method2_adj_total:.2f} = ${recalc_method2:.2f}"
+        )
+        context.append(f"  Parser's Method 1 (Allowed_Amount): ${svc_method1:.2f}")
+        context.append(f"  Parser's Method 2 (Allowed_Verification): ${svc_method2:.2f}")
+        if abs(recalc_method1 - svc_method1) > 0.01:
+            context.append(f"  WARNING: Recalc Method1 differs from Parser by ${abs(recalc_method1 - svc_method1):.2f}")
+        if abs(recalc_method2 - svc_method2) > 0.01:
+            context.append(f"  WARNING: Recalc Method2 differs from Parser by ${abs(recalc_method2 - svc_method2):.2f}")
+        context.append("")
+
+        # === CLAIM CONTEXT ===
+        context.append("=" * 60)
+        context.append("CLAIM CONTEXT")
+        context.append("=" * 60)
+        status_desc = {
+            "1": "Processed as Primary",
+            "2": "Processed as Secondary",
+            "3": "Processed as Tertiary",
+            "4": "Denied",
+            "22": "Reversal of Previous Payment",
+            "25": "Predetermination - No Payment",
+        }
+        context.append(f"  Claim ID: {claim_id}")
+        context.append(f"  Claim Status (CLP02): {claim_status} - {status_desc.get(claim_status, 'Unknown')}")
+        context.append(f"  Payer: {claim_row.get('Payer_Name_L1000A_N1', 'Unknown')}")
+        context.append(f"  Claim Charge: ${self._parse_currency(claim_row.get('CLM_ChargeAmount_L2100_CLP', 0)):.2f}")
+        context.append(f"  Claim Payment: ${self._parse_currency(claim_row.get('CLM_PaymentAmount_L2100_CLP', 0)):.2f}")
+        context.append("")
+
+        # === ANALYSIS ===
+        context.append("=" * 60)
+        context.append("ANALYSIS")
+        context.append("=" * 60)
+        context.append("")
+
+        if claim_status == "22":
+            context.append("  This is a REVERSAL claim (CLP02=22).")
+            context.append("  Per X12 835 Section 1.10.2.8, reversals negate previous payments.")
+            context.append("  All amounts should be negative. If only some are negated,")
+            context.append("  the allowed amount calculation will not balance.")
+        elif claim_status == "4":
+            context.append("  This is a DENIED claim (CLP02=4).")
+            context.append("  Per X12 TR3: Patient/Subscriber not recognized, claim not forwarded.")
+            context.append("  Payment is typically $0, and CO adjustments explain the denial.")
+            context.append("  Method 2 (Payment+PR) may be $0 while Method 1 shows the denial reason.")
+        elif claim_status == "25":
+            context.append("  This is a PREDETERMINATION claim (CLP02=25).")
+            context.append("  Per X12 TR3 Section 1.10.2.7: Pricing only, no payment.")
+            context.append("  Payment is $0. CAS*OA*101 adjustment reduces balance to zero.")
+            context.append("  Method 2 (Payment+PR) = $0 is expected.")
+        elif svc_payment == 0:
+            context.append("  This service has ZERO payment.")
+            context.append("  Possible reasons:")
+            context.append("    - Service denied (check CAS codes)")
+            context.append("    - Service fully adjusted by contractual obligation")
+            context.append("    - Secondary claim where primary paid in full")
+            context.append("  Method 1 and Method 2 may not match for zero-payment services.")
+        elif svc_method1 < 0:
+            context.append("  Method 1 result is NEGATIVE (Charge - CO < 0).")
+            context.append("  This typically means CO adjustments exceed the charge.")
+            context.append("  Possible causes:")
+            context.append("    - Reversal at service level")
+            context.append("    - Overpayment recovery")
+            context.append("    - Data quality issue in payer EDI")
+        else:
+            context.append("  This appears to be a standard mismatch.")
+            context.append("  Possible causes:")
+            context.append("    - Missing or incorrect CAS adjustments in source EDI")
+            context.append("    - Parsing issue not capturing all adjustments")
+            context.append("    - Payer-specific adjustment encoding")
         context.append("")
 
         return context
@@ -2074,27 +2285,53 @@ class ZeroFailValidator:
                                 expected,
                                 diff,
                             )
-                        # Build comprehensive EDI context for debugging
-                        edi_context = self._build_transaction_balance_context(
-                            transaction_segments,
-                            delimiter,
-                            check_total,
-                            clp_payments,
-                            plb_total,
-                            expected,
-                            diff,
-                        )
-                        self.errors.append(
-                            ValidationError(
-                                "CALC",
-                                "Check total doesn't balance per X12 835 Section 1.10.2.1.3",
-                                location="Transaction Level (BPR02 vs CLP04-PLB)",
-                                expected=float(expected),
-                                actual=float(check_total),
-                                payer_info={"name": payer_name, "state": payer_state},
-                                edi_context=edi_context,
+                        # Check for payer-specific override (e.g., eMedNY EMT SUPPLEMENT payments)
+                        identified_payer = colloquial.identify_payer(payer_name=payer_name)
+                        is_expected_discrepancy = False
+                        discrepancy_explanation = None
+
+                        if identified_payer and colloquial.allows_plb_balance_discrepancy(identified_payer):
+                            # Get explanation for the discrepancy
+                            discrepancy_explanation = colloquial.get_balance_discrepancy_explanation(
+                                identified_payer,
+                                float(diff),
+                                plb_segments=None,  # Could pass PLB data for better analysis
                             )
-                        )
+                            if discrepancy_explanation:
+                                is_expected_discrepancy = True
+                                # Log as info instead of error
+                                logger.info(
+                                    "Expected balance discrepancy for %s: $%.2f (%s)",
+                                    payer_name,
+                                    float(diff),
+                                    discrepancy_explanation,
+                                )
+                                self.stats["payer_data_quality_issues"][payer_key][
+                                    "Expected PLB balance discrepancy"
+                                ] += 1
+
+                        if not is_expected_discrepancy:
+                            # Build comprehensive EDI context for debugging
+                            edi_context = self._build_transaction_balance_context(
+                                transaction_segments,
+                                delimiter,
+                                check_total,
+                                clp_payments,
+                                plb_total,
+                                expected,
+                                diff,
+                            )
+                            self.errors.append(
+                                ValidationError(
+                                    "CALC",
+                                    "Check total doesn't balance per X12 835 Section 1.10.2.1.3",
+                                    location="Transaction Level (BPR02 vs CLP04-PLB)",
+                                    expected=float(expected),
+                                    actual=float(check_total),
+                                    payer_info={"name": payer_name, "state": payer_state},
+                                    edi_context=edi_context,
+                                )
+                            )
                     self.stats["calculations_checked"] += 1
 
         # Build CAS segments by composite key (file|claim_id) to match csv_by_claim structure
@@ -2511,17 +2748,47 @@ class ZeroFailValidator:
         # Track duplicate claims in payer_data_quality_issues
         if duplicate_claim_numbers:
             for dup_claim in duplicate_claim_numbers:
-                # Find payer for this claim
-                claim_row = next(
-                    (r for r in csv_rows if r.get("CLM_PatientControlNumber_L2100_CLP") == dup_claim), None
-                )
-                if claim_row:
+                # Find all rows for this claim to check for void/adjustment patterns
+                claim_rows = [r for r in csv_rows if r.get("CLM_PatientControlNumber_L2100_CLP") == dup_claim]
+                if claim_rows:
+                    claim_row = claim_rows[0]
                     payer_name = claim_row.get("Payer_Name_L1000A_N1", "Unknown")
                     payer_state = claim_row.get("Payer_State_L1000A_N4", "Unknown State")
                     payer_key = f"{payer_name}|{payer_state}"
-                    self.stats["payer_data_quality_issues"][payer_key][f"Duplicate claim: {dup_claim}"] = claim_counts[
-                        dup_claim
-                    ]
+
+                    # Get claim statuses for all occurrences
+                    claim_statuses = [r.get("CLM_StatusCode_L2100_CLP", "") for r in claim_rows]
+
+                    is_expected_duplicate = False
+
+                    # FIRST: Check for Status 22 (reversal) - this is STANDARD X12 behavior
+                    # Per X12 835 Section 1.10.2.8, Status 22 = "Reversal of Previous Payment"
+                    # ANY claim with reversals is a void/adjustment pair, regardless of payer
+                    has_reversal = "22" in claim_statuses
+
+                    if has_reversal:
+                        is_expected_duplicate = True
+                        # Track as void/adjustment pair (expected behavior)
+                        self.stats["payer_data_quality_issues"][payer_key][f"Void/Adjustment pair: {dup_claim}"] = (
+                            claim_counts[dup_claim]
+                        )
+                    else:
+                        # SECOND: Check for payer-specific overrides (e.g., eMedNY special cases)
+                        identified_payer = colloquial.identify_payer(payer_name=payer_name)
+
+                        if identified_payer and colloquial.allows_duplicate_claim_ids(identified_payer):
+                            explanation = colloquial.get_duplicate_claim_explanation(identified_payer, claim_statuses)
+                            if explanation:
+                                is_expected_duplicate = True
+                                self.stats["payer_data_quality_issues"][payer_key][
+                                    f"Void/Adjustment pair: {dup_claim}"
+                                ] = claim_counts[dup_claim]
+
+                    if not is_expected_duplicate:
+                        # This is an UNEXPECTED duplicate - report it with context for investigation
+                        self.stats["payer_data_quality_issues"][payer_key][f"Duplicate claim: {dup_claim}"] = (
+                            claim_counts[dup_claim]
+                        )
         if verbose:
             logger.info("      Building expected fields from %d claims...", len(edi_data.get("claims", {})))
         expected_fields = self._build_expected_fields(edi_data, delimiter)
@@ -3662,36 +3929,100 @@ class ZeroFailValidator:
 
             # Validate Allowed Amount calculations
             # Service-level: Method1 (Charge - CO) should equal Method2 (Payment + PR)
+            # Smart validation that handles special cases properly
             for svc_row in service_rows:
                 try:
                     svc_method1 = self._parse_currency(svc_row.get("Allowed_Amount", 0))
                     svc_method2 = self._parse_currency(svc_row.get("Allowed_Verification", 0))
+                    svc_payment = self._parse_currency(svc_row.get("SVC_PaymentAmount_L2110_SVC", 0))
+                    svc_charge = self._parse_currency(svc_row.get("SVC_ChargeAmount_L2110_SVC", 0))
+                    proc = svc_row.get("SVC_ProcedureCode_L2110_SVC", "Unknown")
 
-                    # Skip if both are zero (likely no service data)
+                    # Skip if both are zero (no meaningful data to validate)
                     if svc_method1 == 0 and svc_method2 == 0:
                         continue
 
                     # Check if methods match (within $0.01 tolerance)
-                    if abs(svc_method1 - svc_method2) > 0.01:
-                        proc = svc_row.get("SVC_ProcedureCode_L2110_SVC", "Unknown")
-                        svc_charge = self._parse_currency(svc_row.get("SVC_ChargeAmount_L2110_SVC", 0))
-                        svc_payment = self._parse_currency(svc_row.get("SVC_PaymentAmount_L2110_SVC", 0))
-                        note = ""
-                        if claim_payer_name and "PROSPECT" in claim_payer_name.upper():
-                            note = " Prospect encodes sequestration in CO-253, so Method1 includes it while Method2 (Payment+PR) does not. CSV values match source EDI."
-                        actual_text = f"Difference: ${abs(svc_method1 - svc_method2):.2f}"
-                        if note:
-                            actual_text += note
+                    diff = abs(svc_method1 - svc_method2)
+                    if diff <= 0.01:
+                        continue  # Methods match - no issue
+
+                    # === SMART VALIDATION: Determine if mismatch is expected ===
+
+                    # Case 1: Reversal claims (CLP02=22)
+                    # Per X12 835 Section 1.10.2.8, all amounts should be negated
+                    # If properly formatted, math should still work. If not, it's a data quality issue.
+                    if status == "22":
+                        # For reversals, validate that negation is consistent
+                        # If charge is negative but payment is 0, that's the issue
+                        if svc_charge < 0 and svc_payment == 0:
+                            # Expected: reversal service with voided payment
+                            # Method1 will be negative, Method2 will be 0 - this is normal
+                            continue
+                        # Otherwise, flag as potential data quality issue
+                        edi_context = self._build_allowed_amount_context(
+                            display_claim_id, claim_row, svc_row, svc_method1, svc_method2, status
+                        )
                         self.warnings.append(
                             ValidationError(
                                 "CALC",
-                                f"Service allowed amount mismatch: Method1 (Charge-CO)=${svc_method1:.2f} vs Method2 (Payment+PR)=${svc_method2:.2f}",
+                                f"Reversal claim allowed amount inconsistency: Method1=${svc_method1:.2f} vs Method2=${svc_method2:.2f}",
                                 location=f"Claim {display_claim_id} | Service {proc}",
-                                expected=f"Methods should match. Charge=${svc_charge:.2f}, Payment=${svc_payment:.2f}",
-                                actual=actual_text,
+                                expected="Reversal amounts should be consistently negated",
+                                actual=f"Difference: ${diff:.2f}",
                                 payer_info=claim_payer_info,
+                                edi_context=edi_context,
                             )
                         )
+                        continue
+
+                    # Case 2: Denied claims (CLP02=4), predetermination (CLP02=25), or zero-payment services
+                    # Method2 (Payment+PR) = 0 is expected, Method1 shows why nothing paid
+                    # Per X12 TR3:
+                    #   - Status 4: Denied (patient not recognized)
+                    #   - Status 25: Predetermination pricing only - no payment
+                    if status in ("4", "25") or svc_payment == 0:
+                        if svc_method2 == 0:
+                            # Expected: denied/predetermination/zero-payment service
+                            # Method1 shows allowed calculation, Method2 is 0 - this is normal
+                            continue
+                        # If Method2 is not 0 but payment is 0, there's patient responsibility
+                        # This should actually balance, so flag it
+                        pass  # Fall through to warning
+
+                    # Case 3: Negative Method1 (CO adjustments exceed charge)
+                    # This can happen with overpayment recovery or complex adjustments
+                    if svc_method1 < 0:
+                        if svc_method2 == 0:
+                            # CO adjustments exceeded charge, nothing paid - expected
+                            continue
+                        # Otherwise flag for review
+
+                    # Case 4: Payer-specific known behaviors (via colloquial.py)
+                    identified_payer = colloquial.identify_payer(payer_name=claim_payer_name)
+                    if identified_payer and colloquial.allows_allowed_amount_mismatch(identified_payer):
+                        # This payer is known to have allowed amount mismatches - skip
+                        continue
+
+                    # === Mismatch requires investigation ===
+                    # Build comprehensive context for debugging
+                    edi_context = self._build_allowed_amount_context(
+                        display_claim_id, claim_row, svc_row, svc_method1, svc_method2, status
+                    )
+
+                    actual_text = f"Difference: ${diff:.2f}"
+
+                    self.warnings.append(
+                        ValidationError(
+                            "CALC",
+                            f"Service allowed amount mismatch: Method1 (Charge-CO)=${svc_method1:.2f} vs Method2 (Payment+PR)=${svc_method2:.2f}",
+                            location=f"Claim {display_claim_id} | Service {proc}",
+                            expected=f"Methods should match. Charge=${svc_charge:.2f}, Payment=${svc_payment:.2f}",
+                            actual=actual_text,
+                            payer_info=claim_payer_info,
+                            edi_context=edi_context,
+                        )
+                    )
                 except (ValueError, TypeError):
                     proc = svc_row.get("SVC_ProcedureCode_L2110_SVC", "unknown")
                     logger.warning(
@@ -3823,6 +4154,8 @@ class ZeroFailValidator:
             "transaction_balance_skips": defaultdict(int),
             "empty_claims_count": 0,
             "duplicate_claims": defaultdict(int),
+            "void_adjustment_pairs": defaultdict(int),  # Expected duplicates from void/adjust
+            "expected_plb_discrepancies": 0,  # Expected balance discrepancies (eMedNY, etc.)
             "other_issues": defaultdict(dict),
         }
         for payer_key, issues in raw_issues.items():
@@ -3847,6 +4180,11 @@ class ZeroFailValidator:
                 elif issue_key.startswith("Duplicate claim: "):
                     claim_id = issue_key.replace("Duplicate claim: ", "")
                     result["duplicate_claims"][claim_id] += count
+                elif issue_key.startswith("Void/Adjustment pair: "):
+                    claim_id = issue_key.replace("Void/Adjustment pair: ", "")
+                    result["void_adjustment_pairs"][claim_id] += count
+                elif issue_key == "Expected PLB balance discrepancy":
+                    result["expected_plb_discrepancies"] += count
                 else:
                     result["other_issues"][issue_key][payer_key] = count
         # Convert defaultdicts to regular dicts
@@ -3858,6 +4196,8 @@ class ZeroFailValidator:
             "transaction_balance_skips": dict(result["transaction_balance_skips"]),
             "empty_claims_count": result["empty_claims_count"],
             "duplicate_claims": dict(result["duplicate_claims"]),
+            "void_adjustment_pairs": dict(result["void_adjustment_pairs"]),
+            "expected_plb_discrepancies": result["expected_plb_discrepancies"],
             "other_issues": dict(result["other_issues"]),
         }
 
@@ -3968,8 +4308,10 @@ def generate_executive_dashboard(validation_result: Dict) -> str:
                 else:
                     lines.append(f"      Example: {location}")
                 if example.get("edi_context"):
+                    # Always redact EDI context in reports for PHI protection
+                    edi_ctx = _redact_edi_context(example["edi_context"])
                     lines.append("      Source EDI Data:")
-                    for seg in example["edi_context"]:
+                    for seg in edi_ctx:
                         lines.append(f"        {seg}")
         lines.append("")
     if validation_result.get("missing_mappings"):
@@ -4067,10 +4409,18 @@ def generate_executive_dashboard(validation_result: Dict) -> str:
             # Empty claims
             if quality_issues.get("empty_claims_count"):
                 lines.append(f"  Empty Claims: {quality_issues['empty_claims_count']} claim(s) with no service lines")
-            # Duplicate claims
+            # Duplicate claims (unexpected)
             if quality_issues.get("duplicate_claims"):
                 dup_count = len(quality_issues["duplicate_claims"])
                 lines.append(f"  Duplicate Claims: {dup_count} claim ID(s) appear multiple times")
+            # Void/Adjustment pairs are expected behavior (Status 22 reversals)
+            # Not reported since they are normal 835 corrections, not problems
+            # Expected PLB discrepancies (eMedNY EMT SUPPLEMENT, etc.)
+            if quality_issues.get("expected_plb_discrepancies"):
+                lines.append(
+                    f"  Expected PLB Discrepancies: {quality_issues['expected_plb_discrepancies']} "
+                    "(e.g., eMedNY EMT SUPPLEMENT)"
+                )
             # Unrecognized date formats
             if quality_issues.get("unrecognized_date_formats"):
                 date_count = len(quality_issues["unrecognized_date_formats"])
@@ -4096,6 +4446,55 @@ def generate_executive_dashboard(validation_result: Dict) -> str:
     lines.append("")
     lines.append("=" * 100)
     return "\n".join(lines)
+
+
+def _redact_edi_context(edi_context: List[str], delimiter: str = "*") -> List[str]:
+    """
+    Redact sensitive information from EDI context lines.
+
+    Always redacts patient names, IDs, and other PHI from raw EDI segments.
+    This is applied regardless of CSV redaction settings because validation
+    reports are often shared for debugging.
+
+    Args:
+        edi_context: List of context strings (may include raw EDI segments)
+        delimiter: EDI element delimiter (default '*')
+
+    Returns:
+        List of redacted context strings
+    """
+    if not edi_context:
+        return edi_context
+
+    redacted = []
+    for line in edi_context:
+        # Check if this line contains a raw EDI segment
+        if line.strip().startswith("Raw:") or (delimiter in line and line.strip()[:3].isupper()):
+            # Extract the segment portion
+            if line.strip().startswith("Raw:"):
+                prefix = line[: line.index("Raw:") + 4]
+                segment = line[line.index("Raw:") + 4 :].strip()
+                redacted_segment = redactor.redact_835_segment(segment, delimiter)
+                redacted.append(f"{prefix} {redacted_segment}")
+            else:
+                # Direct segment line
+                redacted.append(redactor.redact_835_segment(line.strip(), delimiter))
+        else:
+            # Non-segment line - check for patient names/IDs in known patterns
+            redacted_line = line
+            # Redact patterns like "Patient Name: John Doe"
+            if "Patient Name:" in line or "Patient:" in line:
+                parts = line.split(":", 1)
+                if len(parts) > 1:
+                    redacted_line = f"{parts[0]}: [REDACTED]"
+            # Redact claim IDs that look like patient control numbers
+            # Keep claim IDs for debugging but redact any that look like SSNs
+            elif "Claim ID:" in line or "Claim:" in line:
+                # Keep claim IDs - they're usually internal reference numbers
+                pass
+            redacted.append(redacted_line)
+
+    return redacted
 
 
 def generate_validation_report(
@@ -4164,8 +4563,10 @@ def generate_text_report(validation_result: Dict, redact: bool = True) -> str:
                 if error.get("field"):
                     lines.append(f"   Field: {error['field']}")
                 if error.get("edi_context"):
+                    # Always redact EDI context in reports for PHI protection
+                    edi_ctx = _redact_edi_context(error["edi_context"])
                     lines.append("   Source EDI Data:")
-                    for seg in error["edi_context"]:
+                    for seg in edi_ctx:
                         lines.append(f"      {seg}")
                 lines.append("")
         lines.append("")
@@ -4177,8 +4578,16 @@ def generate_text_report(validation_result: Dict, redact: bool = True) -> str:
             lines.append(f"{i}. {warning.get('message', 'Unknown warning')}")
             if warning.get("location"):
                 lines.append(f"   Location: {warning['location']}")
+            if warning.get("expected"):
+                lines.append(f"   Expected: {warning['expected']}")
             if warning.get("actual"):
                 lines.append(f"   Details: {warning['actual']}")
+            if warning.get("edi_context"):
+                # Always redact EDI context in reports for PHI protection
+                edi_ctx = _redact_edi_context(warning["edi_context"])
+                lines.append("   Source EDI Data:")
+                for seg in edi_ctx:
+                    lines.append(f"      {seg}")
             lines.append("")
         lines.append("")
         lines.append("-" * 80)
@@ -4303,13 +4712,22 @@ def generate_text_report(validation_result: Dict, redact: bool = True) -> str:
         if quality_issues.get("empty_claims_count"):
             lines.append(f"EMPTY CLAIMS: {quality_issues['empty_claims_count']} claim(s) with no service lines")
             lines.append("")
-        # Duplicate claims
+        # Duplicate claims (unexpected)
         if quality_issues.get("duplicate_claims"):
             lines.append("DUPLICATE CLAIMS DETECTED:")
             lines.append("-" * 40)
             dup_data = quality_issues["duplicate_claims"]
             for claim_id, count in sorted(dup_data.items(), key=lambda x: x[1], reverse=True):
                 lines.append(f"  Claim {claim_id}: {count} occurrence(s)")
+            lines.append("")
+        # Void/Adjustment pairs are expected behavior (Status 22 reversals) - not reported
+        # Expected PLB discrepancies
+        if quality_issues.get("expected_plb_discrepancies"):
+            lines.append("EXPECTED PLB BALANCE DISCREPANCIES:")
+            lines.append("-" * 40)
+            lines.append(f"  {quality_issues['expected_plb_discrepancies']} transaction(s) have balance discrepancies")
+            lines.append("  that are expected based on payer-specific behavior (e.g., eMedNY EMT SUPPLEMENT).")
+            lines.append("  These are lump-sum fiscal-period payments not tied to specific claims.")
             lines.append("")
         # Other issues not categorized above
         if quality_issues.get("other_issues"):
@@ -4520,8 +4938,19 @@ def generate_html_report(validation_result: Dict, redact: bool = True) -> str:
                     html_parts.append(f"                Message: {html.escape(str(warning['message']))}<br>")
                 if warning.get("location"):
                     html_parts.append(f"                Location: {html.escape(warning['location'])}<br>")
+                if warning.get("expected"):
+                    html_parts.append(f"                Expected: {html.escape(str(warning['expected']))}<br>")
                 if warning.get("actual"):
-                    html_parts.append(f"Details: {html.escape(str(warning['actual']))}<br>")
+                    html_parts.append(f"                Details: {html.escape(str(warning['actual']))}<br>")
+                if warning.get("edi_context"):
+                    # Always redact EDI context in reports for PHI protection
+                    edi_ctx = _redact_edi_context(warning["edi_context"])
+                    html_parts.append(
+                        "                <details><summary>Source EDI Data (click to expand)</summary><pre>"
+                    )
+                    for seg in edi_ctx:
+                        html_parts.append(html.escape(seg))
+                    html_parts.append("</pre></details>")
                 html_parts.append("            </div>")
             html_parts.append("        </div>")
     if validation_result.get("errors_by_type"):
@@ -4552,11 +4981,13 @@ def generate_html_report(validation_result: Dict, redact: bool = True) -> str:
                     html_parts.append(f"Expected: <code>{html.escape(str(error['expected']))}</code>, ")
                     html_parts.append(f"Actual: <code>{html.escape(str(error['actual']))}</code><br>")
                 if error.get("edi_context"):
+                    # Always redact EDI context in reports for PHI protection
+                    edi_ctx = _redact_edi_context(error["edi_context"])
                     html_parts.append("<br><strong>Source EDI Data:</strong><br>")
                     html_parts.append(
                         '<pre style="background-color: #f8f9fa; padding: 10px; border-radius: 5px; overflow-x: auto; white-space: pre-wrap;">'
                     )
-                    for seg in error["edi_context"]:
+                    for seg in edi_ctx:
                         html_parts.append(html.escape(str(seg)) + "\n")
                     html_parts.append("</pre>")
                 html_parts.append("        </div>")
@@ -4646,11 +5077,13 @@ def generate_html_report(validation_result: Dict, redact: bool = True) -> str:
                 html_parts.append(f"Actual: {html.escape(str(error['actual']))}<br><br>")
             # Show detailed EDI context if available
             if error.get("edi_context"):
+                # Always redact EDI context in reports for PHI protection
+                edi_ctx = _redact_edi_context(error["edi_context"])
                 html_parts.append("<strong>Detailed Analysis:</strong><br>")
                 html_parts.append(
                     '<pre style="background-color: #f8f9fa; padding: 10px; border-radius: 5px; overflow-x: auto; white-space: pre-wrap;">'
                 )
-                for line in error["edi_context"]:
+                for line in edi_ctx:
                     html_parts.append(html.escape(str(line)) + "\n")
                 html_parts.append("</pre>")
             if context:
@@ -4757,7 +5190,7 @@ def generate_html_report(validation_result: Dict, redact: bool = True) -> str:
         <strong>Empty Claims:</strong> {quality_issues['empty_claims_count']} claim(s) found with no service lines
     </div>
 """)
-        # Duplicate claims
+        # Duplicate claims (unexpected)
         if quality_issues.get("duplicate_claims"):
             html_parts.append("""
     <h3>Duplicate Claims Detected</h3>
@@ -4774,6 +5207,18 @@ def generate_html_report(validation_result: Dict, redact: bool = True) -> str:
                     f"        <tr><td colspan='2'><em>... and {len(dup_data) - 10} more duplicates</em></td></tr>\n"
                 )
             html_parts.append("    </table>\n")
+        # Void/Adjustment pairs are expected behavior (Status 22 reversals) - not reported
+        # Expected PLB discrepancies
+        if quality_issues.get("expected_plb_discrepancies"):
+            html_parts.append(f"""
+    <h3>Expected PLB Balance Discrepancies</h3>
+    <div class="info-box" style="background-color: #d4edda; border-color: #c3e6cb;">
+        <strong>{quality_issues['expected_plb_discrepancies']} transaction(s)</strong> have balance discrepancies
+        that are expected based on payer-specific behavior (e.g., eMedNY EMT SUPPLEMENT payments).
+        <br><br>
+        <em>These are lump-sum fiscal-period payments not tied to specific claims in the 835.</em>
+    </div>
+""")
         # Other issues not categorized above
         if quality_issues.get("other_issues"):
             html_parts.append("""

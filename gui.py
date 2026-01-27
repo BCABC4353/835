@@ -278,6 +278,28 @@ class ProcessingWindow:
         self.root.geometry("1000x700")
         self.root.configure(background="#f0f0f0")
 
+        # Set application icon
+        try:
+            # Determine base path (PyInstaller bundle or development)
+            if getattr(sys, "frozen", False):
+                # Running as compiled executable - check bundle directory first
+                base_path = Path(sys._MEIPASS)  # PyInstaller temp directory
+            else:
+                base_path = Path(__file__).parent
+
+            # Try multiple locations for the icon file
+            icon_paths = [
+                base_path / "app_icon.ico",  # Bundle directory or development
+                Path(sys.executable).parent / "app_icon.ico",  # Executable directory
+                Path.cwd() / "app_icon.ico",  # Current working directory
+            ]
+            for icon_path in icon_paths:
+                if icon_path.exists():
+                    self.root.iconbitmap(str(icon_path))
+                    break
+        except (TclError, AttributeError):
+            pass  # Icon not found or unsupported format - use default
+
         # Thread management
         self.processing_thread = None
         self.shutdown_event = threading.Event()

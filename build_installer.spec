@@ -15,6 +15,8 @@ a = Analysis(
     datas=[
         # Include example config (NOT the actual config - users create their own)
         ('835_config.example.json', '.'),
+        # Include application icon for runtime use (taskbar/title bar)
+        ('app_icon.ico', '.'),
     ],
     hiddenimports=[
         'openpyxl',

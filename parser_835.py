@@ -4041,6 +4041,23 @@ def create_output_row(
         )
         if claim.get("_cas") and len(claim.get("_cas", [])) > 4
         else "",
+        "CLM_CAS6_Group_L2100_CAS": claim.get("_cas", [{}])[5].get("group_code", "")
+        if claim.get("_cas") and len(claim.get("_cas", [])) > 5
+        else "",
+        "CLM_CAS6_Reason_L2100_CAS": claim.get("_cas", [{}])[5].get("reason_code", "")
+        if claim.get("_cas") and len(claim.get("_cas", [])) > 5
+        else "",
+        "CLM_CAS6_Amount_L2100_CAS": claim.get("_cas", [{}])[5].get("amount", "")
+        if claim.get("_cas") and len(claim.get("_cas", [])) > 5
+        else "",
+        "CLM_CAS6_Quantity_L2100_CAS": claim.get("_cas", [{}])[5].get("quantity", "")
+        if claim.get("_cas") and len(claim.get("_cas", [])) > 5
+        else "",
+        "CLM_CAS6_ReasonDesc_L2100_CAS": get_carc_description(
+            claim.get("_cas", [{}])[5].get("reason_code", ""), payer_key=payer_key
+        )
+        if claim.get("_cas") and len(claim.get("_cas", [])) > 5
+        else "",
         "CLM_InterestAmount_L2100_AMT": claim_amt_values.get("interest_amount", ""),
         "CLM_CoverageAmount_L2100_AMT": claim_amt_values.get("coverage_amount", ""),
         "CLM_TaxAmount_L2100_AMT": claim_amt_values.get("tax_amount", ""),
@@ -4303,6 +4320,21 @@ def create_output_row(
         else "",
         "SVC_CAS5_ReasonDesc_L2110_CAS": get_carc_description(service["_cas"][4]["reason_code"], payer_key=payer_key)
         if service and "_cas" in service and len(service["_cas"]) > 4
+        else "",
+        "SVC_CAS6_Group_L2110_CAS": service["_cas"][5]["group_code"]
+        if service and "_cas" in service and len(service["_cas"]) > 5
+        else "",
+        "SVC_CAS6_GroupDesc_L2110_CAS": get_cas_group_code_description(service["_cas"][5]["group_code"])
+        if service and "_cas" in service and len(service["_cas"]) > 5
+        else "",
+        "SVC_CAS6_Reason_L2110_CAS": service["_cas"][5]["reason_code"]
+        if service and "_cas" in service and len(service["_cas"]) > 5
+        else "",
+        "SVC_CAS6_Amount_L2110_CAS": service["_cas"][5]["amount"]
+        if service and "_cas" in service and len(service["_cas"]) > 5
+        else "",
+        "SVC_CAS6_ReasonDesc_L2110_CAS": get_carc_description(service["_cas"][5]["reason_code"], payer_key=payer_key)
+        if service and "_cas" in service and len(service["_cas"]) > 5
         else "",
         "SVC_PriorAuth_L2110_REF": service_ref_values.get("prior_auth", "") if service else "",
         "SVC_ProviderControl_L2110_REF": service_ref_values.get("provider_control", "") if service else "",
@@ -5091,10 +5123,19 @@ def process_folder(folder_path, enable_redaction=False, status_callback=None):
 
     if config.enable_database and config.skip_processed_files:
         try:
+            logger.info("Checking database for previously processed files...")
+            if status_callback:
+                status_callback(f"Checking database for {len(files)} files...")
             db = database.get_database(config.database_path)
             files_to_process = []
 
-            for file_path in files:
+            total_files = len(files)
+            check_interval = max(1, total_files // 20)  # Update every 5%
+            for file_idx, file_path in enumerate(files):
+                # Show progress every 5% of files checked
+                if file_idx % check_interval == 0 and status_callback:
+                    pct = int((file_idx / total_files) * 100)
+                    status_callback(f"Checking database: {file_idx}/{total_files} files ({pct}%)...")
                 is_processed, file_info = db.is_file_processed(file_path)
                 if is_processed:
                     skipped_files_db.append(
@@ -5130,7 +5171,13 @@ def process_folder(folder_path, enable_redaction=False, status_callback=None):
                 return None
 
             files = files_to_process
-            logger.info("Processing %d new file(s) (skipped %d already in database)", len(files), len(skipped_files_db))
+            logger.info(
+                "Database check complete: %d new file(s) to process, %d already in database",
+                len(files),
+                len(skipped_files_db),
+            )
+            if status_callback:
+                status_callback(f"Found {len(files)} new files to process")
 
         except Exception as db_error:
             logger.warning("Database check failed, processing all files: %s", str(db_error))
@@ -5608,6 +5655,12 @@ def process_folder(folder_path, enable_redaction=False, status_callback=None):
                 )
             if data_load_issues:
                 validation_result["data_load_issues"] = data_load_issues
+                # Regenerate text report now that data_load_issues are included
+                if status_callback:
+                    status_callback("Updating text report with data loading issues...")
+                generate_validation_report(
+                    validation_result, output_format="text", output_file=str(validation_output), redact=enable_redaction
+                )
 
             # Also generate HTML report
             if status_callback:

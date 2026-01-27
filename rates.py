@@ -249,6 +249,27 @@ def extract_google_sheet_id(path: str) -> Optional[str]:
     return None
 
 
+def extract_google_sheet_gid(path: str) -> str:
+    """
+    Extract the gid (tab ID) from a Google Sheet URL.
+
+    Args:
+        path: Google Sheet URL
+
+    Returns:
+        The gid string, or "0" if not found (defaults to first tab)
+    """
+    if not path:
+        return "0"
+
+    # Look for gid parameter in URL (e.g., ?gid=123456 or #gid=123456)
+    gid_match = re.search(r"[?&#]gid=(\d+)", path)
+    if gid_match:
+        return gid_match.group(1)
+
+    return "0"
+
+
 def get_google_sheet_csv_url(sheet_id: str, gid: str = "0") -> str:
     """
     Get the CSV export URL for a Google Sheet.
@@ -261,6 +282,13 @@ def get_google_sheet_csv_url(sheet_id: str, gid: str = "0") -> str:
         URL that returns the sheet data as CSV
     """
     return f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=csv&gid={gid}"
+
+
+# Headers to use when fetching Google Sheets (helps avoid getting HTML login pages)
+_GOOGLE_SHEETS_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Accept": "text/csv,text/plain,*/*",
+}
 
 
 def normalize_hcpcs(hcpcs: Any) -> Optional[str]:
@@ -525,15 +553,19 @@ class FairHealthRates:
         if not sheet_id:
             raise ValueError(f"Invalid Google Sheet URL or ID: {sheet_url_or_id}")
 
-        csv_url = get_google_sheet_csv_url(sheet_id)
-        logger.info("Fetching rates from Google Sheet: %s", csv_url)
+        # Extract gid (tab ID) from URL if present, otherwise use first tab
+        gid = extract_google_sheet_gid(sheet_url_or_id)
+        csv_url = get_google_sheet_csv_url(sheet_id, gid)
+        logger.info("Fetching rates from Google Sheet: %s (gid=%s)", csv_url, gid)
 
         try:
-            response = requests.get(csv_url, timeout=30)
+            # Use browser-like headers to avoid getting HTML login pages
+            response = requests.get(csv_url, headers=_GOOGLE_SHEETS_HEADERS, timeout=30)
             response.raise_for_status()
         except requests.exceptions.RequestException as e:
             raise Exception(
-                f"Failed to fetch Google Sheet. Make sure the sheet is shared with 'Anyone with the link'. Error: {e}"
+                f"Failed to fetch Google Sheet. Make sure the sheet is shared with 'Anyone with the link'. "
+                f"URL attempted: {csv_url} | Error: {e}"
             ) from e
 
         # Parse CSV content
@@ -543,14 +575,23 @@ class FairHealthRates:
         content_stripped = content.strip()
         if content_stripped.startswith("<!DOCTYPE") or content_stripped.startswith("<html"):
             raise ValueError(
-                "Google Sheet returned HTML instead of CSV data. "
-                "This usually means the sheet is not shared publicly. "
-                "Please ensure the sheet is shared with 'Anyone with the link' can view."
+                f"Google Sheet returned HTML instead of CSV data. "
+                f"This usually means the sheet is not shared publicly. "
+                f"IMPORTANT: You must share the sheet via the Share button (not just 'Publish to web'). "
+                f"Set 'Anyone with the link' to 'Viewer'. "
+                f"URL attempted: {csv_url}"
             )
 
         # Check for empty response
         if not content_stripped:
-            raise ValueError("Google Sheet returned empty content. Please verify the sheet URL and sharing settings.")
+            raise ValueError(
+                f"Google Sheet returned empty content. This could mean:\n"
+                f"  1. The sheet tab (gid={gid}) is empty or doesn't exist\n"
+                f"  2. The sheet is not shared publicly (use Share button, set 'Anyone with link' to 'Viewer')\n"
+                f"  3. Your URL may be pointing to the wrong tab\n\n"
+                f"URL attempted: {csv_url}\n\n"
+                f"TIP: Make sure your Google Sheet URL includes the correct gid parameter for the tab with data."
+            )
 
         # Build diagnostic info for error reporting (will be included in validation reports)
         diag_lines = []

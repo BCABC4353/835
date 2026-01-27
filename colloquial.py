@@ -237,19 +237,65 @@ PAYER_REGISTRY = {
             "payer_name": ["NYSDOH", "NY STATE DEPT OF HEALTH"],
         },
         "normalize_carc_codes": False,
-        "validation_overrides": {},
-        "parsing_rules": {},
+        "validation_overrides": {
+            # eMedNY sends EMT SUPPLEMENT payments as PLB adjustments that may not balance
+            # with individual CLP claims - these are lump-sum fiscal period payments
+            "allow_plb_balance_discrepancy": True,
+            # eMedNY frequently sends void+resubmit pairs (CLP02=22 followed by CLP02=1)
+            # resulting in many "duplicate" claim IDs which are legitimate
+            "allow_duplicate_claim_ids": True,
+            # eMedNY may skip BPR segments for certain transaction types
+            "allow_missing_bpr": True,
+        },
+        "parsing_rules": {
+            # eMedNY uses FCN# (Financial Control Number) format in PLB03/PLB05
+            # Format: LS:FCN#YYYYMMDDXXXXXX-description
+            "plb_fcn_format": True,
+        },
         "dictionary_overrides": {
             "reference_qualifiers": {
                 "9A": "eMedNY Rate Code",  # Override standard "Repriced Claim Reference Number"
             },
-            "priority_rarc_codes": ["N426", "N427", "N428", "N429", "N892"],
+            # NY-specific codes (N426-N429), general NY Medicaid (N892),
+            # and retroactive rate adjustment codes per eMedNY FAQ ER04 (N689, N419)
+            "priority_rarc_codes": ["N426", "N427", "N428", "N429", "N892", "N689", "N419"],
+            # eMedNY claim status codes (CLP02) - per X12 835 TR3 and eMedNY guidelines
+            # These are standard X12 codes; eMedNY follows the standard definitions
+            "claim_status_codes": {
+                "1": "Processed as Primary",
+                "2": "Processed as Secondary",
+                "3": "Processed as Tertiary",
+                "4": "Denied",
+                "19": "Processed as Primary, Forwarded to Additional Payer(s)",
+                "20": "Processed as Secondary, Forwarded to Additional Payer(s)",
+                "21": "Processed as Tertiary, Forwarded to Additional Payer(s)",
+                "22": "Reversal of Previous Payment",  # VOID - negative amounts expected
+                "23": "Not Our Claim, Forwarded to Additional Payer(s)",
+            },
+            # PLB adjustment reason codes per X12 835 TR3 standard
+            # eMedNY uses LS for EMT SUPPLEMENT fiscal-period lump sums
+            "plb_adjustment_codes": {
+                "LS": "Lump Sum (passthrough, EMT Supplement, rate adjustment)",
+                "WO": "Overpayment Recovery",
+                "FB": "Forwarding Balance (balance carried to future remittance)",
+                "CS": "Adjustment (general, see PLB03-2 for details)",
+                "L6": "Interest Owed",
+                "PI": "Periodic Interim Payment",
+                "RA": "Retro-activity Adjustment",
+            },
         },
         "notes": [
             "REF*9A contains eMedNY rate codes, not repriced claim references",
-            "Uses FCN# (Financial Control Number) in PLB segments",
-            "Pending claims in separate Supplemental file, not in 835",
+            "Uses FCN# (Financial Control Number) in PLB segments for lump-sum adjustments",
+            "EMT SUPPLEMENT payments are fiscal-period lump sums, not claim-specific",
+            "PLB adjustments may cause small balance discrepancies - this is expected",
+            "Pending claims are in separate 'Pended Claims Report' (proprietary), not in 835",
+            "CLP02=22 indicates void/reversal of previous payment (negative amounts)",
+            "Same claim ID with CLP02=22 and CLP02=1 = void + resubmit pair",
+            "Retroactive rate adjustments: CLP02=22 with N689, then CLP02=1 with N419 (per FAQ ER04)",
             "Uses NY-specific RARC codes (N426, N427, N428, N429, N892)",
+            "TCN format: YYDDD#########TA (Year, Julian day, sequence, media type, adjustment code)",
+            "Source: eMedNY Remittance Advice Guidelines and FAQ (emedny.org)",
         ],
     },
     "MS_DOM": {
@@ -378,6 +424,60 @@ PAYER_REGISTRY = {
             "Fiscal agent: Gainwell Technologies",
             "EDI Technical Assistance: 800-457-4584 or INXIXTradingPartner@gainwelltechnologies.com",
             "Source: IHCP 835 Companion Guide v3.4 (August 2024)",
+        ],
+    },
+    "PROSPECT_MEDICAL": {
+        "description": "Prospect Medical Systems (California)",
+        "identifiers": {
+            "trn03": [],
+            "isa06": [],
+            "payer_name": [
+                "PROSPECT MEDICAL SYSTEMS",
+                "PROSPECT HEALTH SOURCE",
+                "PROSPECT MEDICAL SD",
+                "PROSPECT MEDICAL",
+            ],
+        },
+        "normalize_carc_codes": False,
+        "validation_overrides": {
+            # Prospect encodes sequestration (CO-253) in a way that causes allowed amount
+            # mismatch: Method1 (Charge-CO) includes sequestration, but Method2 (Payment+PR)
+            # does not reflect it. This is expected payer behavior.
+            "allow_allowed_amount_mismatch": True,
+            # Prospect may have small balance discrepancies due to rounding
+            "transaction_balance_tolerance": 10.00,
+        },
+        "parsing_rules": {},
+        "dictionary_overrides": {
+            "reference_qualifiers": {},
+            "priority_rarc_codes": [],
+        },
+        "notes": [
+            "Sequestration (CO-253) causes allowed amount mismatch - expected behavior",
+            "Method1 (Charge-CO) includes sequestration, Method2 (Payment+PR) does not",
+            "Transaction balance may be off by up to $10 due to rounding",
+        ],
+    },
+    "EMPLOYERS_MUTUAL": {
+        "description": "Employers Mutual Casualty Company (Workers' Comp)",
+        "identifiers": {
+            "trn03": [],
+            "isa06": [],
+            "payer_name": ["EMPLOYERS MUTUAL"],
+        },
+        "normalize_carc_codes": False,
+        "validation_overrides": {
+            # Workers' comp payers often have complex adjustments that may not balance
+            "transaction_balance_tolerance": 1000.00,
+        },
+        "parsing_rules": {},
+        "dictionary_overrides": {
+            "reference_qualifiers": {},
+            "priority_rarc_codes": [],
+        },
+        "notes": [
+            "Workers' Compensation payer",
+            "Large transaction balance tolerance due to complex WC adjustments",
         ],
     },
     # Template for adding additional payers:
@@ -581,6 +681,106 @@ def allows_generic_payer_id(payer_key):
     return overrides.get("allow_generic_payer_id", False)
 
 
+def allows_plb_balance_discrepancy(payer_key):
+    """
+    Check if payer is known to have PLB adjustments that may not balance.
+
+    Some payers (like eMedNY) send lump-sum supplemental payments (EMT SUPPLEMENT,
+    rate adjustments, etc.) as PLB adjustments that are not tied to specific claims.
+    These may cause small balance discrepancies that are expected behavior.
+
+    Args:
+        payer_key: Payer identifier key
+
+    Returns:
+        bool: True if PLB balance discrepancies are expected for this payer
+    """
+    overrides = get_validation_overrides(payer_key)
+    return overrides.get("allow_plb_balance_discrepancy", False)
+
+
+def allows_duplicate_claim_ids(payer_key):
+    """
+    Check if payer is known to send duplicate claim IDs legitimately.
+
+    Some payers (like eMedNY) frequently send void/adjustment pairs where:
+    - CLP02=22 (Reversal) with negative amounts voids the original
+    - CLP02=1 (Processed as Primary) with positive amounts resubmits
+
+    This results in the same claim ID appearing multiple times, which is
+    legitimate 835 behavior for adjustments, not duplicate claims.
+
+    Args:
+        payer_key: Payer identifier key
+
+    Returns:
+        bool: True if duplicate claim IDs are expected for this payer
+    """
+    overrides = get_validation_overrides(payer_key)
+    return overrides.get("allow_duplicate_claim_ids", False)
+
+
+def allows_missing_bpr(payer_key):
+    """
+    Check if payer may have transactions without BPR segments.
+
+    Some payers may send informational transactions or adjustments
+    without a corresponding BPR (check/payment) segment.
+
+    Args:
+        payer_key: Payer identifier key
+
+    Returns:
+        bool: True if missing BPR is expected for this payer
+    """
+    overrides = get_validation_overrides(payer_key)
+    return overrides.get("allow_missing_bpr", False)
+
+
+def allows_allowed_amount_mismatch(payer_key):
+    """
+    Check if payer is known to have allowed amount calculation mismatches.
+
+    Some payers (like Prospect Medical) encode adjustments in ways that cause
+    Method1 (Charge - CO) and Method2 (Payment + PR) to not match. This is
+    expected payer behavior, not a data quality issue.
+
+    Common causes:
+    - Sequestration (CO-253) included in Method1 but not reflected in Method2
+    - Payer-specific adjustment encoding
+    - Rounding differences
+
+    Args:
+        payer_key: Payer identifier key
+
+    Returns:
+        bool: True if allowed amount mismatches are expected for this payer
+    """
+    overrides = get_validation_overrides(payer_key)
+    return overrides.get("allow_allowed_amount_mismatch", False)
+
+
+def get_transaction_balance_tolerance(payer_key):
+    """
+    Get payer-specific tolerance for transaction balance validation.
+
+    Some payers have small discrepancies in transaction balancing due to:
+    - Rounding differences
+    - Complex adjustment scenarios (especially Workers' Comp)
+    - PLB adjustments that don't tie directly to claims
+
+    Default tolerance is $0.01 per X12 standard.
+
+    Args:
+        payer_key: Payer identifier key
+
+    Returns:
+        float: Tolerance amount in dollars (default 0.01)
+    """
+    overrides = get_validation_overrides(payer_key)
+    return overrides.get("transaction_balance_tolerance", 0.01)
+
+
 # =============================================================================
 # PARSING OVERRIDE FUNCTIONS
 # =============================================================================
@@ -773,6 +973,95 @@ def get_payer_date_qualifier_description(payer_key, code):
     return overrides.get("date_qualifiers", {}).get(code)
 
 
+def get_payer_claim_status_description(payer_key, code):
+    """
+    Get claim status code (CLP02) description with payer-first lookup.
+
+    CLP02 values indicate the disposition of the claim:
+    - 1 = Processed as Primary
+    - 2 = Processed as Secondary
+    - 4 = Denied
+    - 22 = Reversal of Previous Payment (void)
+    - etc.
+
+    Some payers have specific meanings or additional codes.
+
+    Args:
+        payer_key: Payer identifier key (can be None)
+        code: CLP02 claim status code
+
+    Returns:
+        str: Description for the code (payer-specific if available, else standard)
+    """
+    # Standard X12 835 claim status codes
+    standard_codes = {
+        "1": "Processed as Primary",
+        "2": "Processed as Secondary",
+        "3": "Processed as Tertiary",
+        "4": "Denied",
+        "19": "Processed as Primary, Forwarded to Additional Payer(s)",
+        "20": "Processed as Secondary, Forwarded to Additional Payer(s)",
+        "21": "Processed as Tertiary, Forwarded to Additional Payer(s)",
+        "22": "Reversal of Previous Payment",
+        "23": "Not Our Claim, Forwarded to Additional Payer(s)",
+        "25": "Rejected",
+    }
+
+    # Check for payer-specific override first
+    if payer_key:
+        overrides = get_dictionary_overrides(payer_key)
+        claim_status_codes = overrides.get("claim_status_codes", {})
+        if code in claim_status_codes:
+            return claim_status_codes[code]
+
+    # Fall back to standard codes
+    return standard_codes.get(code, f"Unknown Status Code ({code})")
+
+
+def is_reversal_claim_status(code):
+    """
+    Check if a claim status code indicates a reversal/void.
+
+    CLP02=22 means "Reversal of Previous Payment" - the claim amounts
+    will typically be negative, voiding a previous payment.
+
+    Args:
+        code: CLP02 claim status code
+
+    Returns:
+        bool: True if this is a reversal/void status
+    """
+    return str(code) == "22"
+
+
+def is_void_adjustment_pair(claims_with_same_id):
+    """
+    Check if a list of claims with the same ID represents a void/adjustment pair.
+
+    A void/adjustment pair consists of:
+    - One claim with CLP02=22 (Reversal) - negative amounts
+    - One claim with CLP02=1, 2, or 3 (Processed) - corrected amounts
+
+    This is legitimate 835 behavior for correcting previous payments.
+
+    Args:
+        claims_with_same_id: List of claim dicts with same claim ID
+
+    Returns:
+        bool: True if this appears to be a void/adjustment pair
+    """
+    if not claims_with_same_id or len(claims_with_same_id) < 2:
+        return False
+
+    statuses = [str(c.get("claim_status_code", "")) for c in claims_with_same_id]
+
+    # Check for reversal (22) + processed (1, 2, 3) pattern
+    has_reversal = "22" in statuses
+    has_processed = any(s in ("1", "2", "3") for s in statuses)
+
+    return has_reversal and has_processed
+
+
 def get_payer_carc_description(payer_key, code):
     """
     Get CARC description with payer-first lookup.
@@ -833,6 +1122,186 @@ def get_payer_specific_description(payer_key, code_type, code):
     else:
         # Unknown code type - return empty string
         return ""
+
+
+# =============================================================================
+# EMEDNY-SPECIFIC FUNCTIONS
+# =============================================================================
+
+
+def parse_emedny_fcn(plb_reference):
+    """
+    Parse eMedNY FCN# (Financial Control Number) format from PLB segments.
+
+    eMedNY PLB segments use a specific format for adjustment references:
+    LS:FCN#YYYYMMDDXXXXXX-description
+
+    Example:
+    LS:FCN#202512161000512-EMT SUPPLEMENT 04/01-06/30/202
+
+    Args:
+        plb_reference: The PLB03 or PLB05 reference string
+
+    Returns:
+        dict: Parsed FCN information with keys:
+            - adjustment_type: The adjustment type code (e.g., "LS")
+            - fcn: The Financial Control Number
+            - date: The date portion (YYYYMMDD)
+            - sequence: The sequence number
+            - description: The description text
+            - is_emt_supplement: True if this is an EMT SUPPLEMENT payment
+        Returns None if not in FCN# format.
+    """
+    import re
+
+    if not plb_reference:
+        return None
+
+    # Pattern: XX:FCN#YYYYMMDDNNNNNN-description
+    pattern = r"^(\w+):FCN#(\d{8})(\d+)-(.+)$"
+    match = re.match(pattern, plb_reference)
+
+    if not match:
+        # Try simpler pattern without sequence number
+        pattern2 = r"^(\w+):FCN#(\d+)-(.+)$"
+        match2 = re.match(pattern2, plb_reference)
+        if match2:
+            adj_type, fcn_num, description = match2.groups()
+            return {
+                "adjustment_type": adj_type,
+                "fcn": fcn_num,
+                "date": fcn_num[:8] if len(fcn_num) >= 8 else None,
+                "sequence": fcn_num[8:] if len(fcn_num) > 8 else None,
+                "description": description,
+                "is_emt_supplement": "EMT SUPPLEMENT" in description.upper(),
+            }
+        return None
+
+    adj_type, date, sequence, description = match.groups()
+    return {
+        "adjustment_type": adj_type,
+        "fcn": f"{date}{sequence}",
+        "date": date,
+        "sequence": sequence,
+        "description": description,
+        "is_emt_supplement": "EMT SUPPLEMENT" in description.upper(),
+    }
+
+
+def is_emt_supplement_adjustment(plb_reference):
+    """
+    Check if a PLB reference is an EMT SUPPLEMENT payment.
+
+    EMT SUPPLEMENT payments are lump-sum fiscal-period payments from
+    New York Medicaid for ambulance/EMS services. They are not tied
+    to specific claims and may cause balance discrepancies.
+
+    Args:
+        plb_reference: The PLB03 or PLB05 reference string
+
+    Returns:
+        bool: True if this is an EMT SUPPLEMENT adjustment
+    """
+    if not plb_reference:
+        return False
+    return "EMT SUPPLEMENT" in str(plb_reference).upper()
+
+
+def get_balance_discrepancy_explanation(payer_key, discrepancy_amount, plb_segments=None):
+    """
+    Get an explanation for a balance discrepancy based on payer characteristics.
+
+    Some payers have known behaviors that cause balance discrepancies:
+    - eMedNY: EMT SUPPLEMENT payments are lump-sum fiscal-period adjustments
+    - Other payers may have similar quirks
+
+    Args:
+        payer_key: Payer identifier key
+        discrepancy_amount: The discrepancy amount (expected - actual)
+        plb_segments: Optional list of PLB segment data for analysis
+
+    Returns:
+        str or None: Explanation if discrepancy is expected, None otherwise
+    """
+    if not payer_key:
+        return None
+
+    config = get_payer_config(payer_key)
+
+    # Check if this payer allows PLB balance discrepancies
+    overrides = config.get("validation_overrides", {})
+    if not overrides.get("allow_plb_balance_discrepancy"):
+        return None
+
+    # Build explanation based on payer
+    if payer_key == "EMEDNY":
+        explanation_parts = [
+            f"Balance discrepancy of ${abs(discrepancy_amount):.2f} detected.",
+            "This is expected behavior for eMedNY (NYSDOH).",
+        ]
+
+        # Check for EMT SUPPLEMENT in PLB segments
+        if plb_segments:
+            emt_supplements = []
+            for plb in plb_segments:
+                ref = plb.get("reference", "") or plb.get("adjustment_reason", "")
+                if is_emt_supplement_adjustment(ref):
+                    emt_supplements.append(ref)
+
+            if emt_supplements:
+                explanation_parts.append(
+                    "EMT SUPPLEMENT payments are lump-sum fiscal-period adjustments "
+                    "that are not tied to specific claims in this 835."
+                )
+
+        explanation_parts.append("Source: eMedNY Remittance Advice Guidelines (emedny.org)")
+
+        return " ".join(explanation_parts)
+
+    return None
+
+
+def get_duplicate_claim_explanation(payer_key, claim_statuses):
+    """
+    Get an explanation for duplicate claim IDs based on payer characteristics.
+
+    Args:
+        payer_key: Payer identifier key
+        claim_statuses: List of CLP02 status codes for claims with the same ID
+
+    Returns:
+        str or None: Explanation if duplicates are expected, None otherwise
+    """
+    if not payer_key:
+        return None
+
+    config = get_payer_config(payer_key)
+
+    # Check if this payer allows duplicate claim IDs
+    overrides = config.get("validation_overrides", {})
+    if not overrides.get("allow_duplicate_claim_ids"):
+        return None
+
+    # Check for void/adjustment pattern
+    statuses = [str(s) for s in claim_statuses]
+    has_reversal = "22" in statuses
+    has_processed = any(s in ("1", "2", "3") for s in statuses)
+
+    if has_reversal and has_processed:
+        return (
+            "This claim ID appears multiple times with status 22 (Reversal) and "
+            "status 1/2/3 (Processed). This is a void/adjustment pair - the original "
+            "payment was voided and a corrected payment issued. This is normal 835 behavior."
+        )
+
+    if payer_key == "EMEDNY":
+        return (
+            "eMedNY frequently sends adjustments and corrections that result in "
+            "the same claim ID appearing multiple times. Each occurrence represents "
+            "a separate transaction event (original, adjustment, void, resubmit, etc.)."
+        )
+
+    return None
 
 
 # =============================================================================
