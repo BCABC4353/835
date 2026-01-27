@@ -102,9 +102,7 @@ class EDIProcessor:
         try:
             self.fair_health_rates = rates.FairHealthRates()
             # Use unified load() method that handles both Excel and Google Sheets
-            # Pass gid from config if available (for .gsheet files that don't specify tab)
-            rates_gid = get_config().rates_gid
-            stats = self.fair_health_rates.load(rates_file_path, gid=rates_gid)
+            stats = self.fair_health_rates.load(rates_file_path)
             source_type = stats.get("source", "excel")
             logger.info("Loaded Fair Health rates from %s: %s rate combinations", source_type, stats["rate_keys"])
             logger.debug("  ZIP codes: %s, HCPCS codes: %s", stats["unique_zips"], stats["unique_hcpcs"])

@@ -138,21 +138,6 @@ class SettingsDialog:
             foreground="#666666",
         ).pack(side=tk.LEFT, padx=5)
 
-        # Google Sheet Tab ID (gid) - for .gsheet files that don't specify which tab
-        gid_frame = ttk.Frame(main_frame)
-        gid_frame.pack(fill=tk.X, pady=5)
-
-        ttk.Label(gid_frame, text="Sheet Tab:", width=12).pack(side=tk.LEFT)
-        self.gid_var = tk.StringVar(value=self.config.get("rates_gid") or "")
-        gid_entry = ttk.Entry(gid_frame, textvariable=self.gid_var, width=20)
-        gid_entry.pack(side=tk.LEFT, padx=5)
-        ttk.Label(
-            gid_frame,
-            text="(For .gsheet files: copy gid number from browser URL, e.g. 1510374061)",
-            font=("Segoe UI", 8),
-            foreground="#666666",
-        ).pack(side=tk.LEFT, padx=5)
-
         # CSV Output folder path
         output_frame = ttk.Frame(main_frame)
         output_frame.pack(fill=tk.X, pady=5)
@@ -234,7 +219,6 @@ class SettingsDialog:
         # Update config
         trips_path = self.trips_var.get().strip()
         rates_path = self.rates_var.get().strip()
-        rates_gid = self.gid_var.get().strip()
         output_path = self.output_var.get().strip()
         db_path = self.db_var.get().strip()
         deduct_path = self.deduct_var.get().strip()
@@ -245,7 +229,6 @@ class SettingsDialog:
 
         self.config.set("trips_csv_path", trips_path if trips_path else None)
         self.config.set("rates_xlsx_path", rates_path if rates_path else None)
-        self.config.set("rates_gid", rates_gid if rates_gid else None)
         self.config.set("output_folder", output_path if output_path else None)
         self.config.set("database_path", db_path if db_path else None)
         self.config.set("deductible_report_output_dir", deduct_path if deduct_path else None)

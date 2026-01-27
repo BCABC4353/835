@@ -34,7 +34,6 @@ class Config:
         #   (also supports legacy format: RUN, puzip, AMOUNT)
         "trips_csv_path": None,
         "rates_xlsx_path": None,  # Fair Health rates by ZIP + HCPCS code
-        "rates_gid": None,  # Google Sheet tab ID (gid) for .gsheet files
         # Output file names (relative to output folder)
         "output_csv_name": "835_consolidated_output.csv",
         "output_csv_compact_name": "835_consolidated_output_compact.csv",
@@ -198,11 +197,6 @@ class Config:
         if path:
             return os.path.expanduser(path)
         return path
-
-    @property
-    def rates_gid(self) -> Optional[str]:
-        """Google Sheet tab ID (gid) for .gsheet files (None = use default/first tab)"""
-        return self._config.get("rates_gid")
 
     @property
     def output_csv_name(self) -> str:
