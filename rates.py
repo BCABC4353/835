@@ -850,7 +850,7 @@ class FairHealthRates:
             "source": "google_sheet",
         }
 
-    def load(self, source: str) -> dict:
+    def load(self, source: str, gid: Optional[str] = None) -> dict:
         """
         Load rate data from either a local Excel file, Google Sheet URL, or .gsheet file.
 
@@ -858,6 +858,8 @@ class FairHealthRates:
 
         Args:
             source: Either a local file path (.xlsx/.gsheet) or Google Sheet URL/ID
+            gid: Optional Google Sheet tab ID. If provided, overrides any gid in the URL.
+                 Useful for .gsheet files which don't include tab information.
 
         Returns:
             dict with load statistics
@@ -878,11 +880,28 @@ class FairHealthRates:
             if not sheet_url:
                 raise ValueError(f"Could not read Google Sheet URL from .gsheet file: {source}")
             logger.info("Found Google Sheet URL: %s", sheet_url)
+            # If gid is provided, append it to the URL (overrides any existing gid)
+            if gid:
+                logger.info("Using configured sheet tab gid=%s", gid)
+                # Add gid to URL if not already present
+                if "gid=" not in sheet_url:
+                    separator = "&" if "?" in sheet_url else "?"
+                    sheet_url = f"{sheet_url}{separator}gid={gid}"
+                else:
+                    # Replace existing gid
+                    import re
+
+                    sheet_url = re.sub(r"([?&])gid=\d+", f"\\1gid={gid}", sheet_url)
             return self.load_from_google_sheet(sheet_url)
 
         # Check if it's a Google Sheet URL or ID
         if is_google_sheet(source):
             logger.info("Detected Google Sheet source")
+            # If gid is provided, append/override it
+            if gid and "gid=" not in source:
+                logger.info("Using configured sheet tab gid=%s", gid)
+                separator = "&" if "?" in source else "?"
+                source = f"{source}{separator}gid={gid}"
             return self.load_from_google_sheet(source)
 
         # Otherwise treat as local file
