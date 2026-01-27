@@ -528,6 +528,142 @@ class FairHealthRates:
             "rate_keys": len(self.rate_ranges),
         }
 
+    def _fetch_google_sheet_content(self, sheet_id: str, gid: str, original_url: str) -> tuple:
+        """
+        Fetch Google Sheet content with auto-discovery of correct tab.
+
+        If the requested gid returns empty and it was the default (gid=0),
+        this method will try to discover which tab actually contains data
+        by checking the sheet's HTML for available tab IDs.
+
+        Args:
+            sheet_id: The Google Sheet ID
+            gid: The tab ID to try first
+            original_url: The original URL provided by user (for error messages)
+
+        Returns:
+            Tuple of (content, csv_url, actual_gid)
+
+        Raises:
+            ValueError: If no tab with data can be found
+            Exception: If the sheet cannot be accessed
+        """
+        csv_url = get_google_sheet_csv_url(sheet_id, gid)
+        logger.info("Fetching rates from Google Sheet: %s (gid=%s)", csv_url, gid)
+
+        try:
+            response = requests.get(csv_url, headers=_GOOGLE_SHEETS_HEADERS, timeout=30)
+            response.raise_for_status()
+        except requests.exceptions.RequestException as e:
+            raise Exception(
+                f"Failed to fetch Google Sheet. Make sure the sheet is shared with 'Anyone with the link'. "
+                f"URL attempted: {csv_url} | Error: {e}"
+            ) from e
+
+        content = response.text
+        content_stripped = content.strip()
+
+        # Check if we got HTML instead of CSV (indicates auth/access issue)
+        if content_stripped.startswith("<!DOCTYPE") or content_stripped.startswith("<html"):
+            raise ValueError(
+                f"Google Sheet returned HTML instead of CSV data. "
+                f"This usually means the sheet is not shared publicly. "
+                f"IMPORTANT: You must share the sheet via the Share button (not just 'Publish to web'). "
+                f"Set 'Anyone with the link' to 'Viewer'. "
+                f"URL attempted: {csv_url}"
+            )
+
+        # If content is empty and we used the default gid, try to discover correct tab
+        if not content_stripped and gid == "0":
+            logger.info("Tab gid=0 is empty, attempting to discover correct tab...")
+            discovered_gid = self._discover_sheet_tab(sheet_id)
+
+            if discovered_gid and discovered_gid != "0":
+                logger.info("Discovered tab with data: gid=%s", discovered_gid)
+                # Recursively try with discovered gid
+                return self._fetch_google_sheet_content(sheet_id, discovered_gid, original_url)
+            else:
+                # No tab discovered, provide helpful error
+                raise ValueError(
+                    f"Google Sheet returned empty content. This could mean:\n"
+                    f"  1. The sheet tab (gid={gid}) is empty or doesn't exist\n"
+                    f"  2. The sheet is not shared publicly (use Share button, set 'Anyone with link' to 'Viewer')\n"
+                    f"  3. Your URL may be pointing to the wrong tab\n\n"
+                    f"URL attempted: {csv_url}\n\n"
+                    f"TIP: Open the Google Sheet in your browser, navigate to the tab with your data,\n"
+                    f"     then copy the FULL URL from the address bar (it should include ?gid=XXXXXXX).\n"
+                    f"     Paste that complete URL into Settings."
+                )
+
+        if not content_stripped:
+            raise ValueError(
+                f"Google Sheet returned empty content. This could mean:\n"
+                f"  1. The sheet tab (gid={gid}) is empty or doesn't exist\n"
+                f"  2. The sheet is not shared publicly (use Share button, set 'Anyone with link' to 'Viewer')\n"
+                f"  3. Your URL may be pointing to the wrong tab\n\n"
+                f"URL attempted: {csv_url}\n\n"
+                f"TIP: Make sure your Google Sheet URL includes the correct gid parameter for the tab with data."
+            )
+
+        return content, csv_url, gid
+
+    def _discover_sheet_tab(self, sheet_id: str) -> Optional[str]:
+        """
+        Attempt to discover which tab contains data by checking the sheet's HTML.
+
+        Google Sheets HTML contains JavaScript with tab (gid) information.
+        This method tries to extract available gids and find one with data.
+
+        Args:
+            sheet_id: The Google Sheet ID
+
+        Returns:
+            A gid string if a tab with data is found, None otherwise
+        """
+        try:
+            # Fetch the sheet's HTML page to find available tabs
+            html_url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/edit"
+            response = requests.get(html_url, headers=_GOOGLE_SHEETS_HEADERS, timeout=15)
+
+            if response.status_code != 200:
+                return None
+
+            html_content = response.text
+
+            # Look for gid patterns in the HTML/JavaScript
+            # Google Sheets embeds tab info in various formats
+            gid_pattern = re.compile(r'["\']?gid["\']?\s*[:=]\s*["\']?(\d+)["\']?', re.IGNORECASE)
+            found_gids = set(gid_pattern.findall(html_content))
+
+            # Remove "0" since we already tried it
+            found_gids.discard("0")
+
+            if not found_gids:
+                logger.info("No additional tabs discovered in sheet HTML")
+                return None
+
+            logger.info("Found potential tabs: %s", list(found_gids)[:5])
+
+            # Try each discovered gid until we find one with data
+            for test_gid in sorted(found_gids, key=int):  # Try in numeric order
+                try:
+                    test_url = get_google_sheet_csv_url(sheet_id, test_gid)
+                    test_response = requests.get(test_url, headers=_GOOGLE_SHEETS_HEADERS, timeout=10)
+                    if test_response.status_code == 200:
+                        test_content = test_response.text.strip()
+                        if test_content and not test_content.startswith("<!DOCTYPE"):
+                            # Found a tab with data!
+                            logger.info("Tab gid=%s has content (%d chars)", test_gid, len(test_content))
+                            return test_gid
+                except requests.exceptions.RequestException:
+                    continue
+
+            return None
+
+        except Exception as e:
+            logger.debug("Tab discovery failed: %s", e)
+            return None
+
     def load_from_google_sheet(self, sheet_url_or_id: str) -> dict:
         """
         Load rate data from a Google Sheet.
@@ -555,43 +691,9 @@ class FairHealthRates:
 
         # Extract gid (tab ID) from URL if present, otherwise use first tab
         gid = extract_google_sheet_gid(sheet_url_or_id)
-        csv_url = get_google_sheet_csv_url(sheet_id, gid)
-        logger.info("Fetching rates from Google Sheet: %s (gid=%s)", csv_url, gid)
 
-        try:
-            # Use browser-like headers to avoid getting HTML login pages
-            response = requests.get(csv_url, headers=_GOOGLE_SHEETS_HEADERS, timeout=30)
-            response.raise_for_status()
-        except requests.exceptions.RequestException as e:
-            raise Exception(
-                f"Failed to fetch Google Sheet. Make sure the sheet is shared with 'Anyone with the link'. "
-                f"URL attempted: {csv_url} | Error: {e}"
-            ) from e
-
-        # Parse CSV content
-        content = response.text
-
-        # Check if we got HTML instead of CSV (indicates auth/access issue)
-        content_stripped = content.strip()
-        if content_stripped.startswith("<!DOCTYPE") or content_stripped.startswith("<html"):
-            raise ValueError(
-                f"Google Sheet returned HTML instead of CSV data. "
-                f"This usually means the sheet is not shared publicly. "
-                f"IMPORTANT: You must share the sheet via the Share button (not just 'Publish to web'). "
-                f"Set 'Anyone with the link' to 'Viewer'. "
-                f"URL attempted: {csv_url}"
-            )
-
-        # Check for empty response
-        if not content_stripped:
-            raise ValueError(
-                f"Google Sheet returned empty content. This could mean:\n"
-                f"  1. The sheet tab (gid={gid}) is empty or doesn't exist\n"
-                f"  2. The sheet is not shared publicly (use Share button, set 'Anyone with link' to 'Viewer')\n"
-                f"  3. Your URL may be pointing to the wrong tab\n\n"
-                f"URL attempted: {csv_url}\n\n"
-                f"TIP: Make sure your Google Sheet URL includes the correct gid parameter for the tab with data."
-            )
+        # Try to fetch the content, with auto-discovery of correct tab if gid=0 fails
+        content, csv_url, gid = self._fetch_google_sheet_content(sheet_id, gid, sheet_url_or_id)
 
         # Build diagnostic info for error reporting (will be included in validation reports)
         diag_lines = []
