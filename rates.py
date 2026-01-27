@@ -392,10 +392,20 @@ class FairHealthRates:
         wb = openpyxl.load_workbook(filepath, read_only=True, data_only=True)
         ws = wb.active
 
-        # Get headers from first row
+        # Get headers from first row, normalizing whitespace
         headers = []
         for cell in next(ws.iter_rows(min_row=1, max_row=1)):
-            headers.append(str(cell.value).strip() if cell.value else "")
+            if cell.value:
+                h = str(cell.value)
+                # Replace newlines, carriage returns, tabs with spaces
+                normalized = re.sub(r"[\r\n\t]+", " ", h)
+                # Collapse multiple spaces into one
+                normalized = re.sub(r"\s+", " ", normalized).strip()
+                headers.append(normalized)
+            else:
+                headers.append("")
+
+        logger.debug("Excel headers found: %s", headers)
 
         # Map column names
         col_map = {}
@@ -403,14 +413,19 @@ class FairHealthRates:
             header_lower = header.lower()
             if "location" in header_lower and "medical care" in header_lower:
                 col_map["zip"] = idx
+                logger.debug("Matched ZIP column at index %d: %s", idx, header)
             elif "date" in header_lower and "gmt" in header_lower:
                 col_map["date"] = idx
+                logger.debug("Matched date column at index %d: %s", idx, header)
             elif "procedure code" in header_lower or "keyword" in header_lower:
                 col_map["hcpcs"] = idx
+                logger.debug("Matched HCPCS column at index %d: %s", idx, header)
             elif "out of network" in header_lower:
                 col_map["rate1"] = idx
+                logger.debug("Matched rate1 (Out of Network) column at index %d: %s", idx, header)
             elif "in-network" in header_lower or "in network" in header_lower:
                 col_map["rate2"] = idx
+                logger.debug("Matched rate2 (In-Network) column at index %d: %s", idx, header)
 
         # Collect raw data grouped by (zip, hcpcs)
         raw_data: Dict[Tuple[int, str], List[dict]] = {}
@@ -523,29 +538,102 @@ class FairHealthRates:
 
         # Parse CSV content
         content = response.text
+
+        # Check if we got HTML instead of CSV (indicates auth/access issue)
+        content_stripped = content.strip()
+        if content_stripped.startswith("<!DOCTYPE") or content_stripped.startswith("<html"):
+            raise ValueError(
+                "Google Sheet returned HTML instead of CSV data. "
+                "This usually means the sheet is not shared publicly. "
+                "Please ensure the sheet is shared with 'Anyone with the link' can view."
+            )
+
+        # Check for empty response
+        if not content_stripped:
+            raise ValueError("Google Sheet returned empty content. Please verify the sheet URL and sharing settings.")
+
+        # Build diagnostic info for error reporting (will be included in validation reports)
+        diag_lines = []
+        diag_lines.append(f"Response size: {len(content)} characters")
+
+        # Capture first few lines of raw content for debugging
+        content_lines = content.split("\n")
+        diag_lines.append("First 3 lines of raw CSV data:")
+        for i, line in enumerate(content_lines[:3]):
+            # Truncate very long lines for readability
+            display_line = line[:150] + "..." if len(line) > 150 else line
+            diag_lines.append(f"  Line {i + 1}: {repr(display_line)}")
+
         reader = csv.reader(io.StringIO(content))
 
         # Get headers from first row
-        headers = next(reader, [])
-        headers = [h.strip() if h else "" for h in headers]
+        raw_headers = next(reader, [])
+        diag_lines.append(f"Raw headers ({len(raw_headers)} columns): {raw_headers[:10]}")
+        if len(raw_headers) > 10:
+            diag_lines.append(f"  ... and {len(raw_headers) - 10} more columns")
+
+        # Normalize headers: strip whitespace, replace newlines/tabs with spaces, collapse multiple spaces
+        headers = []
+        for h in raw_headers:
+            if h:
+                # Replace newlines, carriage returns, tabs with spaces
+                normalized = re.sub(r"[\r\n\t]+", " ", h)
+                # Collapse multiple spaces into one
+                normalized = re.sub(r"\s+", " ", normalized).strip()
+                headers.append(normalized)
+            else:
+                headers.append("")
+
+        diag_lines.append(f"Normalized headers: {headers[:10]}")
 
         # Map column names (same logic as Excel loader)
         col_map = {}
+        matched_columns = []
         for idx, header in enumerate(headers):
             header_lower = header.lower()
             if "location" in header_lower and "medical care" in header_lower:
                 col_map["zip"] = idx
+                matched_columns.append(f"ZIP (col {idx}): '{header}'")
             elif "date" in header_lower and "gmt" in header_lower:
                 col_map["date"] = idx
+                matched_columns.append(f"Date (col {idx}): '{header}'")
             elif "procedure code" in header_lower or "keyword" in header_lower:
                 col_map["hcpcs"] = idx
+                matched_columns.append(f"HCPCS (col {idx}): '{header}'")
             elif "out of network" in header_lower:
                 col_map["rate1"] = idx
+                matched_columns.append(f"Out of Network (col {idx}): '{header}'")
             elif "in-network" in header_lower or "in network" in header_lower:
                 col_map["rate2"] = idx
+                matched_columns.append(f"In-Network (col {idx}): '{header}'")
+
+        if matched_columns:
+            diag_lines.append("Matched columns:")
+            for mc in matched_columns:
+                diag_lines.append(f"  - {mc}")
+        else:
+            diag_lines.append("No columns matched!")
+
+        diag_lines.append(f"Column mapping result: {col_map}")
+
+        # Log diagnostic info to console as well
+        for line in diag_lines:
+            logger.info(line)
 
         if not col_map:
-            raise ValueError("Could not find expected columns in Google Sheet. Check column headers.")
+            # Build comprehensive error message with all diagnostic info
+            diag_lines.append("")
+            diag_lines.append("EXPECTED COLUMN PATTERNS:")
+            diag_lines.append("  - ZIP: header containing 'location' AND 'medical care'")
+            diag_lines.append("  - Date: header containing 'date' AND 'gmt'")
+            diag_lines.append("  - HCPCS: header containing 'procedure code' OR 'keyword'")
+            diag_lines.append("  - Out of Network: header containing 'out of network'")
+            diag_lines.append("  - In-Network: header containing 'in-network' or 'in network'")
+
+            diagnostic_detail = "\n".join(diag_lines)
+            raise ValueError(
+                f"Could not find expected columns in Google Sheet.\n\n" f"DIAGNOSTIC INFORMATION:\n{diagnostic_detail}"
+            )
 
         # Collect raw data grouped by (zip, hcpcs)
         raw_data: Dict[Tuple[int, str], List[dict]] = {}

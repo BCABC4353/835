@@ -5648,35 +5648,105 @@ def process_folder(folder_path, enable_redaction=False, status_callback=None):
                 if status_callback:
                     status_callback(f"HTML report saved to: {validation_html}")
 
-            # Show payer data quality issues
-            payer_quality_issues = validation_result.get("payer_data_quality_issues", {})
-            if payer_quality_issues:
+            # Show payer data quality issues (using reorganized structure)
+            quality_issues = validation_result.get("payer_data_quality_issues", {})
+            has_quality_issues = quality_issues and any(
+                quality_issues.get(k)
+                for k in [
+                    "missing_carc_codes",
+                    "missing_rarc_codes",
+                    "missing_dictionary_entries",
+                    "unrecognized_date_formats",
+                    "transaction_balance_skips",
+                    "empty_claims_count",
+                    "duplicate_claims",
+                    "other_issues",
+                ]
+            )
+            if has_quality_issues:
                 logger.info("=" * 80)
                 logger.info("PAYER DATA QUALITY ISSUES")
                 logger.info("=" * 80)
+                logger.info("")
+                logger.info("Issues detected that may require payer follow-up or dictionary updates:")
+                logger.info("")
 
-                # Group issues by type across all payers
-                issue_types = defaultdict(lambda: defaultdict(int))
-                for payer_key, issues in payer_quality_issues.items():
-                    for issue_type, count in issues.items():
-                        issue_types[issue_type][payer_key] += count
-
-                # Display each type of issue
-                for issue_type in sorted(issue_types.keys()):
-                    payers = issue_types[issue_type]
-                    total_count = sum(payers.values())
-                    logger.info("%s: %d total", issue_type, total_count)
+                # Missing CARC codes
+                if quality_issues.get("missing_carc_codes"):
+                    logger.info("MISSING CARC CODES (Claim Adjustment Reason Codes):")
                     logger.info("-" * 40)
+                    carc_data = quality_issues["missing_carc_codes"]
+                    for code, payers in sorted(carc_data.items()):
+                        payer_list = list(payers.keys()) if isinstance(payers, dict) else [str(payers)]
+                        logger.info("  Code: %s", code)
+                        logger.info("    Payers: %s", ", ".join(payer_list))
+                    logger.info("")
 
-                    # Sort payers by count for this issue type
-                    payer_list = sorted(payers.items(), key=lambda x: x[1], reverse=True)
+                # Missing RARC codes
+                if quality_issues.get("missing_rarc_codes"):
+                    logger.info("MISSING RARC CODES (Remittance Advice Remark Codes):")
+                    logger.info("-" * 40)
+                    rarc_data = quality_issues["missing_rarc_codes"]
+                    for code, payers in sorted(rarc_data.items()):
+                        payer_list = list(payers.keys()) if isinstance(payers, dict) else [str(payers)]
+                        logger.info("  Code: %s", code)
+                        logger.info("    Payers: %s", ", ".join(payer_list))
+                    logger.info("")
 
-                    # Show all payers for this issue
-                    for payer_key, count in payer_list:
-                        payer_parts = payer_key.split("|")
-                        payer_name = payer_parts[0]
-                        payer_state = payer_parts[1] if len(payer_parts) > 1 else "N/A"
-                        logger.info("  - %s (%s): %d", payer_name, payer_state, count)
+                # Missing dictionary entries
+                if quality_issues.get("missing_dictionary_entries"):
+                    logger.info("MISSING DICTIONARY ENTRIES:")
+                    logger.info("-" * 40)
+                    dict_data = quality_issues["missing_dictionary_entries"]
+                    for entry_type, entries in sorted(dict_data.items()):
+                        entry_list = list(entries.keys()) if isinstance(entries, dict) else [str(entries)]
+                        logger.info("  Type: %s", entry_type)
+                        logger.info("    Missing: %s", ", ".join(str(e) for e in entry_list))
+                    logger.info("")
+
+                # Unrecognized date formats
+                if quality_issues.get("unrecognized_date_formats"):
+                    logger.info("UNRECOGNIZED DATE FORMATS:")
+                    logger.info("-" * 40)
+                    date_data = quality_issues["unrecognized_date_formats"]
+                    for date_val, count in sorted(date_data.items(), key=lambda x: x[1], reverse=True):
+                        logger.info("  '%s' - %d occurrence(s)", date_val, count)
+                    logger.info("")
+
+                # Transaction balance skips
+                if quality_issues.get("transaction_balance_skips"):
+                    logger.info("TRANSACTION BALANCE SKIPS:")
+                    logger.info("-" * 40)
+                    skip_data = quality_issues["transaction_balance_skips"]
+                    for reason, count in sorted(skip_data.items(), key=lambda x: x[1], reverse=True):
+                        logger.info("  %s: %d transaction(s)", reason, count)
+                    logger.info("")
+
+                # Empty claims
+                if quality_issues.get("empty_claims_count"):
+                    logger.info("EMPTY CLAIMS: %d claim(s) with no service lines", quality_issues["empty_claims_count"])
+                    logger.info("")
+
+                # Duplicate claims
+                if quality_issues.get("duplicate_claims"):
+                    logger.info("DUPLICATE CLAIMS DETECTED:")
+                    logger.info("-" * 40)
+                    dup_data = quality_issues["duplicate_claims"]
+                    for claim_id, count in sorted(dup_data.items(), key=lambda x: x[1], reverse=True):
+                        logger.info("  Claim %s: %d occurrence(s)", claim_id, count)
+                    logger.info("")
+
+                # Other issues not categorized above
+                if quality_issues.get("other_issues"):
+                    logger.info("OTHER DATA QUALITY ISSUES:")
+                    logger.info("-" * 40)
+                    other_data = quality_issues["other_issues"]
+                    for issue_key, payers in sorted(other_data.items()):
+                        total = sum(payers.values()) if isinstance(payers, dict) else payers
+                        logger.info("  %s: %d occurrence(s)", issue_key, total)
+                    logger.info("")
+
+                logger.info("-" * 80)
             else:
                 # Fallback to old format if new structure isn't available
                 payers_missing_units = validation_result.get("payers_missing_mileage_units", {})

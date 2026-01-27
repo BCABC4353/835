@@ -1,60 +1,36 @@
 # 835 EDI Parser - Git Ignore File
+# Ignore everything except the core application files
 
-# Configuration files (may contain sensitive paths)
-835_config.json
-.835config
+# Ignore everything by default
+*
 
-# Keep example config
-!835_config.example.json
+# Allow directories to be traversed
+!*/
 
-# Python cache
-__pycache__/
-*.pyc
-*.pyo
-*.pyd
-
-# Logs
-*.log
-
-# Testing output
-*_TESTING/
-*.PROCESSED
-
-# Data files (don't commit user data)
-*.csv
-*.xlsx
-*.txt
-*.html
-
-# But keep example/template files and documentation
+# Core application files (whitelist)
+!.github/
+!.github/**
+!.gitignore
+!.pre-commit-config.yaml
+!.vscode/
+!.vscode/settings.json
 !835_config.example.json
 !LICENSE.txt
 !X12.txt
+!app_icon.ico
+!build_installer.spec
+!categorization.py
+!colloquial.py
+!config.py
+!database.py
+!dictionary.py
+!generate_deductible_collection_reports.py
+!gui.py
+!installer.iss
+!parser_835.py
+!pyproject.toml
+!rates.py
+!redactor.py
 !requirements.txt
-
-# OS files
-.DS_Store
-Thumbs.db
-desktop.ini
-
-# IDE
-.vscode/
-.idea/
-*.swp
-*.swo
-*~
-
-# Claude Code / MCP
-.claude/
-.mcp.json
-tmpclaude-*
-claude.ps1
-
-# Local utility scripts (not part of main application)
-cleanup_files.ps1
-move_denial_files.ps1
-
-# Distribution
-dist/
-build/
-*.egg-info/
+!validation.py
+!version.py
