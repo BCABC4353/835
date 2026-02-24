@@ -394,11 +394,16 @@ class EDIDatabase:
         """
         Generate unique transaction identifier.
 
-        Composite key: ISA13 + TRN02 + CLP07 + Status + SEQ
+        Composite key: CLP01 + CLP07 + Status + SEQ
+
+        Uses claim-based identifiers so the same claim appearing in
+        multiple EOB files produces the same UID and is deduplicated
+        by INSERT OR IGNORE.  Per X12 835 spec section 1.10.2.8,
+        CLP07 (Payer Claim Control Number) is consistent between
+        original and reversal, while CLP02 (Status) distinguishes them.
         """
         components = [
-            str(row.get("ENV_InterchangeControlNumber_Envelope_ISA", "")),
-            str(row.get("CHK_TraceNumber_Header_TRN", "")),
+            str(row.get("CLM_PatientControlNumber_L2100_CLP", "")),
             str(row.get("CLM_PayerControlNumber_L2100_CLP", "")),
             str(row.get("CLM_Status_L2100_CLP", "")),
             str(row.get("SEQ", "")),
