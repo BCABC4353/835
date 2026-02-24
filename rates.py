@@ -45,6 +45,15 @@ except ImportError:
 _RE_GOOGLE_SHEET_URL = re.compile(r"https?://docs\.google\.com/spreadsheets/d/([a-zA-Z0-9_-]+)")
 _RE_GOOGLE_SHEET_ID = re.compile(r"^[a-zA-Z0-9_-]{20,}$")
 
+# ZIP code crosswalk regions for Fair Health rate lookups.
+# When a pickup ZIP falls within a region but isn't directly present in the
+# Fair Health spreadsheet, the lookup falls back to whichever ZIP in that
+# region IS present.  Format: (region_name, start_zip, end_zip)
+_ZIP_CROSSWALK_REGIONS = [
+    ("Albany", 12201, 12288),
+    ("Schenectady", 12301, 12345),
+]
+
 
 def read_gsheet_file(filepath: str) -> Optional[str]:
     """
@@ -955,6 +964,43 @@ class FairHealthRates:
         """
         return sorted(self.load_stats["unique_zips"])
 
+    def _resolve_zip(self, zip_code: int) -> int:
+        """
+        Resolve a ZIP code through the crosswalk regions.
+
+        If ``zip_code`` already exists in the loaded rate data it is returned
+        unchanged.  Otherwise, if it falls within a defined crosswalk region,
+        the method returns the representative ZIP for that region (whichever
+        ZIP in the region IS present in the spreadsheet).  Results are cached
+        so the region scan only runs once per ZIP.
+        """
+        if zip_code in self.load_stats["unique_zips"]:
+            return zip_code
+
+        if not hasattr(self, "_zip_crosswalk_cache"):
+            self._zip_crosswalk_cache: Dict[int, int] = {}
+
+        if zip_code in self._zip_crosswalk_cache:
+            return self._zip_crosswalk_cache[zip_code]
+
+        resolved = zip_code
+        for region_name, start_zip, end_zip in _ZIP_CROSSWALK_REGIONS:
+            if start_zip <= zip_code <= end_zip:
+                for loaded_zip in self.load_stats["unique_zips"]:
+                    if start_zip <= loaded_zip <= end_zip:
+                        resolved = loaded_zip
+                        logger.info(
+                            "ZIP crosswalk: %s -> %s (%s)",
+                            zip_code,
+                            loaded_zip,
+                            region_name,
+                        )
+                        break
+                break
+
+        self._zip_crosswalk_cache[zip_code] = resolved
+        return resolved
+
     def get_rate(self, zip_code: int, hcpcs: str, service_date: Optional[date] = None) -> Optional[Tuple[Any, Any]]:
         """
         Look up rates for a given ZIP and HCPCS code.
@@ -971,6 +1017,7 @@ class FairHealthRates:
         if hcpcs_norm is None:
             return None
 
+        zip_code = self._resolve_zip(zip_code)
         key = (zip_code, hcpcs_norm)
 
         if service_date is None:
