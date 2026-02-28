@@ -1,0 +1,28 @@
+{
+  "_comment": "835 EDI Parser Configuration File",
+  "_comment2": "Copy this file to '835_config.json' and customize for your environment",
+  "_comment3": "All paths can use ~ for home directory or absolute paths",
+
+  "_comment_trips": "Fair Health ZIP CSV: provides RUN->ZIP mapping and patient payments",
+  "_comment_trips2": "Columns: FAIR HEALTH ZIP[RUN], FAIR HEALTH ZIP[PUZIP], FAIR HEALTH ZIP[PT PAID]",
+  "trips_csv_path": "~\\Desktop\\FAIR HEALTH ZIP(in).csv",
+  "rates_xlsx_path": "~\\Desktop\\RATES.xlsx",
+
+  "output_csv_name": "835_consolidated_output.csv",
+  "output_csv_compact_name": "835_consolidated_output_compact.csv",
+  "validation_report_txt_name": "835_validation_report.txt",
+  "validation_report_html_name": "835_validation_report.html",
+
+  "_comment_output": "Set output_folder to send all CSVs to one location (for Power BI). null = same as input folder",
+  "output_folder": null,
+
+  "_comment_deduct": "Set deductible_report_output_dir to skip prompt. null = prompt each time",
+  "deductible_report_output_dir": null,
+
+  "enable_fair_health_rates": true,
+  "enable_trips_lookup": true,
+  "enable_compact_csv": true,
+
+  "log_level": "INFO",
+  "log_file": null
+}

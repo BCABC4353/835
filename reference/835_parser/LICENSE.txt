@@ -1,0 +1,27 @@
+835 EDI PARSER - SOFTWARE LICENSE
+
+Copyright (c) 2024. All rights reserved.
+
+This software is proprietary and confidential.
+
+GRANT OF LICENSE:
+This software is licensed, not sold. You are granted a non-exclusive,
+non-transferable license to use this software for processing HIPAA 835
+EDI remittance files.
+
+RESTRICTIONS:
+- You may not distribute, sublicense, or transfer this software to others
+- You may not reverse engineer, decompile, or disassemble this software
+- You may not remove or alter any copyright notices
+
+DISCLAIMER OF WARRANTY:
+This software is provided "AS IS" without warranty of any kind, either
+expressed or implied, including but not limited to the implied warranties
+of merchantability and fitness for a particular purpose.
+
+LIMITATION OF LIABILITY:
+In no event shall the copyright holder be liable for any damages whatsoever
+arising out of the use of or inability to use this software.
+
+For questions about licensing, please contact your organization's
+administrator.

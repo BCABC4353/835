@@ -34,7 +34,3 @@
 !requirements.txt
 !validation.py
 !version.py
-
-# Reference material
-!reference/
-!reference/**

@@ -1,0 +1,56 @@
+[project]
+name = "edi-835-parser"
+dynamic = ["version"]
+description = "Parser for HIPAA 835 EDI remittance files with Fair Health rate lookup"
+requires-python = ">=3.8"
+license = {text = "Proprietary"}
+
+dependencies = [
+    "openpyxl>=3.1.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "mypy>=1.19",
+    "ruff>=0.14",
+    "black>=25.0",
+    "isort>=7.0",
+    "pytest>=9.0",
+    "pytest-cov>=7.0",
+    "rich>=14.0",
+]
+
+[tool.ruff]
+line-length = 120
+target-version = "py38"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "C4", "UP"]
+ignore = ["E501", "B023", "F841", "B007"]  # E501: Line too long, B023: Lambda captures loop var, F841: Unused var, B007: Unused loop var
+
+[tool.black]
+line-length = 120
+target-version = ["py38", "py39", "py310", "py311", "py312"]
+
+[tool.isort]
+profile = "black"
+line_length = 120
+
+[tool.mypy]
+python_version = "3.8"
+warn_return_any = true
+warn_unused_ignores = true
+ignore_missing_imports = true
+
+[build-system]
+requires = ["setuptools>=65", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.dynamic]
+version = {attr = "version.__version__"}
+
+[project.scripts]
+edi-835-parser = "parser_835:main"
+
+[project.gui-scripts]
+edi-835-parser-gui = "gui:main"

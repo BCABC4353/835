@@ -1,0 +1,6 @@
+{
+    "python.languageServer": "Jedi",
+    "python.analysis.typeCheckingMode": "off",
+    "python.analysis.diagnosticMode": "workspace"
+}
+

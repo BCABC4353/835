@@ -1,0 +1,66 @@
+name: Build Installer on Push
+
+on:
+  push:
+    branches:
+      - master
+      - main
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install pyinstaller openpyxl requests
+
+    - name: Build executable with PyInstaller
+      run: pyinstaller build_installer.spec
+
+    - name: Install InnoSetup
+      run: choco install innosetup -y
+
+    - name: Generate version.txt for InnoSetup
+      run: python -c "from version import __version__; print(__version__)" > version.txt
+
+    - name: Create installer output directory
+      run: mkdir -p installer_output
+
+    - name: Build installer with InnoSetup
+      run: |
+        & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer.iss
+      shell: pwsh
+
+    - name: Get commit info
+      id: commit_info
+      run: |
+        $shortSha = "${{ github.sha }}".Substring(0, 7)
+        $date = Get-Date -Format 'yyyyMMdd-HHmmss'
+        echo "short_sha=$shortSha" >> $env:GITHUB_OUTPUT
+        echo "date=$date" >> $env:GITHUB_OUTPUT
+      shell: pwsh
+
+    - name: Upload installer
+      uses: actions/upload-artifact@v4
+      with:
+        name: 835-EDI-Parser-Setup-${{ steps.commit_info.outputs.short_sha }}
+        path: installer_output/*.exe
+        retention-days: 30
+
+    - name: Build summary
+      run: |
+        echo "✅ Installer built successfully!" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "📦 Download from Artifacts section above" >> $GITHUB_STEP_SUMMARY
+        echo "File: 835-EDI-Parser-Setup-${{ steps.commit_info.outputs.short_sha }}.exe" >> $GITHUB_STEP_SUMMARY
