@@ -10,7 +10,7 @@ Supports loading from:
 
 Column mapping from source:
 - "Enter the location where you will be receiving or have received medical care" = ZIP Code
-- "Date (GMT)" = date
+- "Date (GMT)" or "Extract Date" = date
 - "Enter a Procedure Code or Keyword" = HCPCS
 - "Out of Network" = Rate 1
 - "In-Network" = Rate 2
@@ -19,6 +19,7 @@ Column mapping from source:
 import csv
 import io
 import logging
+import os
 import re
 from datetime import date, datetime, timedelta
 from typing import Any, Dict, List, Optional, Tuple, Union
@@ -417,9 +418,13 @@ class FairHealthRates:
         self.current_rates: Dict[Tuple[int, str], dict] = {}
         self.load_stats = {"rows_processed": 0, "rows_skipped": 0, "unique_zips": set(), "unique_hcpcs": set()}
 
-    def load_from_excel(self, filepath: str) -> dict:
+    def load_from_excel(self, filepath: str, *, skip_existing: bool = False) -> dict:
         """
         Load rate data from Excel file.
+
+        Args:
+            filepath: Path to the .xlsx file.
+            skip_existing: If True, keys already loaded are not overwritten.
 
         Returns dict with load statistics.
         """
@@ -451,7 +456,7 @@ class FairHealthRates:
             if "location" in header_lower and "medical care" in header_lower:
                 col_map["zip"] = idx
                 logger.debug("Matched ZIP column at index %d: %s", idx, header)
-            elif "date" in header_lower and "gmt" in header_lower:
+            elif "date" in header_lower:
                 col_map["date"] = idx
                 logger.debug("Matched date column at index %d: %s", idx, header)
             elif "procedure code" in header_lower or "keyword" in header_lower:
@@ -527,7 +532,7 @@ class FairHealthRates:
         wb.close()
 
         # Build rate ranges from raw data
-        self._build_rate_ranges(raw_data)
+        self._build_rate_ranges(raw_data, skip_existing=skip_existing)
 
         return {
             "rows_processed": self.load_stats["rows_processed"],
@@ -673,7 +678,7 @@ class FairHealthRates:
             logger.debug("Tab discovery failed: %s", e)
             return None
 
-    def load_from_google_sheet(self, sheet_url_or_id: str) -> dict:
+    def load_from_google_sheet(self, sheet_url_or_id: str, *, skip_existing: bool = False) -> dict:
         """
         Load rate data from a Google Sheet.
 
@@ -682,6 +687,7 @@ class FairHealthRates:
 
         Args:
             sheet_url_or_id: Google Sheet URL or sheet ID
+            skip_existing: If True, keys already loaded are not overwritten.
 
         Returns:
             dict with load statistics
@@ -704,33 +710,43 @@ class FairHealthRates:
         # Try to fetch the content, with auto-discovery of correct tab if gid=0 fails
         content, csv_url, gid = self._fetch_google_sheet_content(sheet_id, gid, sheet_url_or_id)
 
-        # Build diagnostic info for error reporting (will be included in validation reports)
+        return self._parse_csv_content(content, source_label="google_sheet", skip_existing=skip_existing)
+
+    def _parse_csv_content(self, content: str, *, source_label: str = "csv", skip_existing: bool = False) -> dict:
+        """
+        Parse CSV text content into rate data.
+
+        Shared by load_from_google_sheet, load_from_csv, and load_baseline.
+
+        Args:
+            content: Raw CSV text.
+            source_label: Label for the source in returned stats.
+            skip_existing: If True, keys already in self.rate_ranges are not
+                overwritten (historical-wins merge).
+
+        Returns:
+            dict with load statistics.
+        """
         diag_lines = []
         diag_lines.append(f"Response size: {len(content)} characters")
 
-        # Capture first few lines of raw content for debugging
         content_lines = content.split("\n")
         diag_lines.append("First 3 lines of raw CSV data:")
         for i, line in enumerate(content_lines[:3]):
-            # Truncate very long lines for readability
             display_line = line[:150] + "..." if len(line) > 150 else line
             diag_lines.append(f"  Line {i + 1}: {repr(display_line)}")
 
         reader = csv.reader(io.StringIO(content))
 
-        # Get headers from first row
         raw_headers = next(reader, [])
         diag_lines.append(f"Raw headers ({len(raw_headers)} columns): {raw_headers[:10]}")
         if len(raw_headers) > 10:
             diag_lines.append(f"  ... and {len(raw_headers) - 10} more columns")
 
-        # Normalize headers: strip whitespace, replace newlines/tabs with spaces, collapse multiple spaces
         headers = []
         for h in raw_headers:
             if h:
-                # Replace newlines, carriage returns, tabs with spaces
                 normalized = re.sub(r"[\r\n\t]+", " ", h)
-                # Collapse multiple spaces into one
                 normalized = re.sub(r"\s+", " ", normalized).strip()
                 headers.append(normalized)
             else:
@@ -738,7 +754,6 @@ class FairHealthRates:
 
         diag_lines.append(f"Normalized headers: {headers[:10]}")
 
-        # Map column names (same logic as Excel loader)
         col_map = {}
         matched_columns = []
         for idx, header in enumerate(headers):
@@ -746,7 +761,7 @@ class FairHealthRates:
             if "location" in header_lower and "medical care" in header_lower:
                 col_map["zip"] = idx
                 matched_columns.append(f"ZIP (col {idx}): '{header}'")
-            elif "date" in header_lower and "gmt" in header_lower:
+            elif "date" in header_lower:
                 col_map["date"] = idx
                 matched_columns.append(f"Date (col {idx}): '{header}'")
             elif "procedure code" in header_lower or "keyword" in header_lower:
@@ -768,32 +783,28 @@ class FairHealthRates:
 
         diag_lines.append(f"Column mapping result: {col_map}")
 
-        # Log diagnostic info to console as well
         for line in diag_lines:
             logger.info(line)
 
         if not col_map:
-            # Build comprehensive error message with all diagnostic info
             diag_lines.append("")
             diag_lines.append("EXPECTED COLUMN PATTERNS:")
             diag_lines.append("  - ZIP: header containing 'location' AND 'medical care'")
-            diag_lines.append("  - Date: header containing 'date' AND 'gmt'")
+            diag_lines.append("  - Date: header containing 'date'")
             diag_lines.append("  - HCPCS: header containing 'procedure code' OR 'keyword'")
             diag_lines.append("  - Out of Network: header containing 'out of network'")
             diag_lines.append("  - In-Network: header containing 'in-network' or 'in network'")
 
             diagnostic_detail = "\n".join(diag_lines)
             raise ValueError(
-                f"Could not find expected columns in Google Sheet.\n\n" f"DIAGNOSTIC INFORMATION:\n{diagnostic_detail}"
+                f"Could not find expected columns in CSV data.\n\n" f"DIAGNOSTIC INFORMATION:\n{diagnostic_detail}"
             )
 
-        # Collect raw data grouped by (zip, hcpcs)
         raw_data: Dict[Tuple[int, str], List[dict]] = {}
 
         for row in reader:
             self.load_stats["rows_processed"] += 1
 
-            # Get values (with safe indexing)
             def safe_get(idx_key):
                 idx = col_map.get(idx_key)
                 if idx is not None and idx < len(row):
@@ -806,32 +817,26 @@ class FairHealthRates:
             rate1_val = safe_get("rate1")
             rate2_val = safe_get("rate2")
 
-            # Normalize values
             zip_code = normalize_zip(zip_val)
             hcpcs = normalize_hcpcs(hcpcs_val)
             rate1 = normalize_rate(rate1_val)
             rate2 = normalize_rate(rate2_val)
 
-            # Skip invalid rows
             if zip_code is None or hcpcs is None:
                 self.load_stats["rows_skipped"] += 1
                 continue
 
-            # Skip rows with no valid rates
             if rate1 is None and rate2 is None:
                 self.load_stats["rows_skipped"] += 1
                 continue
 
-            # Parse date
             entry_date = date.today()
             if date_val:
                 date_val = str(date_val).strip()
-                # Try ISO format first
                 try:
                     entry_date = datetime.fromisoformat(date_val.replace("Z", "+00:00")).date()
                 except ValueError:
-                    # Try other common formats
-                    for fmt in ["%Y-%m-%d", "%m/%d/%Y", "%m/%d/%y", "%Y%m%d"]:
+                    for fmt in ["%Y-%m-%d", "%m/%d/%Y", "%m/%d/%Y %H:%M", "%m/%d/%y", "%m/%d/%y %H:%M", "%Y%m%d"]:
                         try:
                             entry_date = datetime.strptime(date_val, fmt).date()
                             break
@@ -847,8 +852,7 @@ class FairHealthRates:
             self.load_stats["unique_zips"].add(zip_code)
             self.load_stats["unique_hcpcs"].add(hcpcs)
 
-        # Build rate ranges from raw data
-        self._build_rate_ranges(raw_data)
+        self._build_rate_ranges(raw_data, skip_existing=skip_existing)
 
         return {
             "rows_processed": self.load_stats["rows_processed"],
@@ -856,17 +860,53 @@ class FairHealthRates:
             "unique_zips": len(self.load_stats["unique_zips"]),
             "unique_hcpcs": len(self.load_stats["unique_hcpcs"]),
             "rate_keys": len(self.rate_ranges),
-            "source": "google_sheet",
+            "source": source_label,
         }
 
-    def load(self, source: str) -> dict:
+    def load_from_csv(self, filepath: str, *, skip_existing: bool = False) -> dict:
         """
-        Load rate data from either a local Excel file, Google Sheet URL, or .gsheet file.
+        Load rate data from a local CSV file.
+
+        Args:
+            filepath: Path to the CSV file.
+            skip_existing: If True, keys already loaded are not overwritten.
+
+        Returns:
+            dict with load statistics.
+        """
+        logger.info("Loading rates from CSV file: %s", filepath)
+        with open(filepath, encoding="utf-8-sig") as f:
+            content = f.read()
+        return self._parse_csv_content(content, source_label="csv", skip_existing=skip_existing)
+
+    def load_baseline(self) -> Optional[dict]:
+        """
+        Load bundled baseline Fair Health rates from data/fair_health_baseline.csv.
+
+        The baseline file is located relative to this module. If the file does
+        not exist (e.g. in development without the data directory), this method
+        returns None silently.
+
+        Returns:
+            dict with load statistics, or None if baseline file is missing.
+        """
+        baseline_path = os.path.join(os.path.dirname(__file__), "data", "fair_health_baseline.csv")
+        if not os.path.exists(baseline_path):
+            logger.debug("No baseline rates file found at %s", baseline_path)
+            return None
+
+        logger.info("Loading baseline Fair Health rates from %s", baseline_path)
+        return self.load_from_csv(baseline_path)
+
+    def load(self, source: str, *, skip_existing: bool = False) -> dict:
+        """
+        Load rate data from a local file (Excel/CSV), Google Sheet URL, or .gsheet file.
 
         Automatically detects the source type based on the input.
 
         Args:
-            source: Either a local file path (.xlsx/.gsheet) or Google Sheet URL/ID
+            source: File path (.xlsx/.csv/.gsheet) or Google Sheet URL/ID.
+            skip_existing: If True, keys already loaded are not overwritten.
 
         Returns:
             dict with load statistics
@@ -887,27 +927,39 @@ class FairHealthRates:
             if not sheet_url:
                 raise ValueError(f"Could not read Google Sheet URL from .gsheet file: {source}")
             logger.info("Found Google Sheet URL: %s", sheet_url)
-            return self.load_from_google_sheet(sheet_url)
+            return self.load_from_google_sheet(sheet_url, skip_existing=skip_existing)
 
         # Check if it's a Google Sheet URL or ID
         if is_google_sheet(source):
             logger.info("Detected Google Sheet source")
-            return self.load_from_google_sheet(source)
+            return self.load_from_google_sheet(source, skip_existing=skip_existing)
 
-        # Otherwise treat as local file
+        # Local CSV file
+        if source.lower().endswith(".csv"):
+            logger.info("Loading from local CSV file: %s", source)
+            return self.load_from_csv(source, skip_existing=skip_existing)
+
+        # Otherwise treat as local Excel file
         if not source.lower().endswith(".xlsx"):
             logger.warning("Source doesn't end with .xlsx, attempting to load as Excel anyway: %s", source)
 
         logger.info("Loading from local Excel file: %s", source)
-        return self.load_from_excel(source)
+        return self.load_from_excel(source, skip_existing=skip_existing)
 
-    def _build_rate_ranges(self, raw_data: Dict[Tuple[int, str], List[dict]]):
+    def _build_rate_ranges(self, raw_data: Dict[Tuple[int, str], List[dict]], skip_existing: bool = False):
         """
         Build consolidated date ranges from daily entries.
 
         Consecutive days with the same rates are consolidated into ranges.
+
+        Args:
+            raw_data: Mapping of (zip, hcpcs) -> list of daily entries.
+            skip_existing: If True, keys already present in self.rate_ranges
+                are left untouched (used for historical-wins merge).
         """
         for key, entries in raw_data.items():
+            if skip_existing and key in self.rate_ranges:
+                continue
             # Sort by date
             entries.sort(key=lambda x: x["date"])
 

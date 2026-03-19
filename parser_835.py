@@ -75,38 +75,62 @@ class EDIProcessor:
 
     def load_fair_health_rates(self, rates_file_path=None):
         """
-        Load Fair Health rates from Excel file.
+        Load Fair Health rates, starting with the bundled baseline CSV and
+        then overlaying the user-configured source (Excel, CSV, or Google Sheet).
+
+        Baseline (historical) data takes priority: user data only fills in
+        ZIP+HCPCS combinations not already present in the baseline.
 
         Args:
-            rates_file_path: Path to RATES.xlsx file. If None, uses configured path.
+            rates_file_path: Path to user rates file. If None, uses configured path.
 
         Returns:
             True if rates loaded successfully, False otherwise.
         """
-        if rates_file_path is None:
-            # Get from configuration
-            rates_file_path = get_config().rates_xlsx_path
-
-        if rates_file_path is None:
-            logger.info("Fair Health rates path not configured (columns will be empty)")
-            return False
-
-        # Check if it's a Google Sheet URL (skip file existence check for URLs)
-        is_google_sheet = rates.is_google_sheet(rates_file_path)
-
-        if not is_google_sheet and not os.path.exists(rates_file_path):
-            self.rate_load_error = f"Fair Health rates file not found: {rates_file_path}"
-            logger.info("%s (columns will be empty)", self.rate_load_error)
-            return False
-
         try:
             self.fair_health_rates = rates.FairHealthRates()
-            # Use unified load() method that handles both Excel and Google Sheets
-            stats = self.fair_health_rates.load(rates_file_path)
-            source_type = stats.get("source", "excel")
-            logger.info("Loaded Fair Health rates from %s: %s rate combinations", source_type, stats["rate_keys"])
-            logger.debug("  ZIP codes: %s, HCPCS codes: %s", stats["unique_zips"], stats["unique_hcpcs"])
-            self.rate_load_error = None  # Clear any previous error
+
+            # 1. Load bundled baseline rates (always attempted)
+            baseline_stats = self.fair_health_rates.load_baseline()
+            if baseline_stats:
+                logger.info(
+                    "Loaded baseline Fair Health rates: %s rate combinations",
+                    baseline_stats["rate_keys"],
+                )
+
+            # 2. Overlay user-configured rates (skip keys already in baseline)
+            if rates_file_path is None:
+                rates_file_path = get_config().rates_xlsx_path
+
+            if rates_file_path is not None:
+                is_google_sheet = rates.is_google_sheet(rates_file_path)
+
+                if is_google_sheet or os.path.exists(rates_file_path):
+                    user_stats = self.fair_health_rates.load(rates_file_path, skip_existing=True)
+                    source_type = user_stats.get("source", "excel")
+                    logger.info(
+                        "Loaded user Fair Health rates from %s: %s total rate combinations",
+                        source_type,
+                        user_stats["rate_keys"],
+                    )
+                    logger.debug(
+                        "  ZIP codes: %s, HCPCS codes: %s",
+                        user_stats["unique_zips"],
+                        user_stats["unique_hcpcs"],
+                    )
+                else:
+                    logger.info(
+                        "User rates file not found: %s (using baseline only)",
+                        rates_file_path,
+                    )
+
+            if not self.fair_health_rates.rate_ranges:
+                self.rate_load_error = "No Fair Health rate data loaded (no baseline or user file)"
+                logger.info("%s (columns will be empty)", self.rate_load_error)
+                self.fair_health_rates = None
+                return False
+
+            self.rate_load_error = None
             return True
         except ImportError as e:
             self.rate_load_error = f"Missing dependency for Fair Health rates: {e}"

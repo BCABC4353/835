@@ -34,3 +34,7 @@
 !requirements.txt
 !validation.py
 !version.py
+
+# Bundled data files
+!data/
+!data/fair_health_baseline.csv

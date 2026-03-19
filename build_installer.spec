@@ -17,6 +17,8 @@ a = Analysis(
         ('835_config.example.json', '.'),
         # Include application icon for runtime use (taskbar/title bar)
         ('app_icon.ico', '.'),
+        # Bundled baseline Fair Health rates
+        ('data/fair_health_baseline.csv', 'data'),
     ],
     hiddenimports=[
         'openpyxl',
